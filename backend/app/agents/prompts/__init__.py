@@ -9,6 +9,7 @@ from pathlib import Path
 
 # creative_script 节点使用的 Prompt 引用，格式固定为 `调用点/版本`。
 GENERATE_CREATIVE_DRAFT_PROMPT_REF = "generate_creative_draft/v1"
+REVIEW_CREATIVE_CLAIMS_PROMPT_REF = "review_creative_claims/v1"
 
 
 @dataclass(frozen=True)
@@ -41,7 +42,14 @@ PROMPT_REGISTRY: dict[str, PromptDefinition] = {
         description="creative_script 节点调用 LLM 时使用，输出三个可审核的 15 秒创意方案。",
         owner="agents",
         file_name="generate_creative_draft.v1.md",
-    )
+    ),
+    REVIEW_CREATIVE_CLAIMS_PROMPT_REF: PromptDefinition(
+        key="review_creative_claims",
+        version="v1",
+        description="审核创意草案中的商品声明是否有已确认事实证据。",
+        owner="agents",
+        file_name="review_creative_claims.v1.md",
+    ),
 }
 
 
@@ -68,4 +76,3 @@ def load_prompt_template(prompt_ref: str) -> PromptTemplate:
         owner=definition.owner,
         system_prompt=system_prompt,
     )
-

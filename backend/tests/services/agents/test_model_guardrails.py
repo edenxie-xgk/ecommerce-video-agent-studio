@@ -57,6 +57,22 @@ class AnalysisOverridingProvider:
     def generate_json(self, **kwargs) -> ModelJsonResponse:
         self.calls += 1
         self.requested_schema = kwargs["json_schema"]
+        properties = self.requested_schema.get("properties", {})
+        if "assessments" in properties:
+            return ModelJsonResponse(
+                payload={
+                    "assessments": [
+                        {
+                            "text": "Lightweight",
+                            "field_path": "concepts[0].primary_selling_point",
+                            "status": "supported",
+                            "evidence_key": "selling_point:0",
+                            "reason": "与已确认卖点完全一致。",
+                        }
+                    ]
+                },
+                model_key="analysis-overrider",
+            )
         return ModelJsonResponse(
             payload=deepcopy(self.payload),
             model_key="analysis-overrider",

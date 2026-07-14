@@ -20,12 +20,43 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """旧版本没有落盘文件，不能继续把其记录视为 Agent 图片证据。"""
 
-    op.execute(
-        sa.text(
-            "UPDATE project_assets "
-            "SET asset_type = 'legacy_unverified_image' "
-            "WHERE asset_type = 'product_image'"
+    connection = op.get_bind()
+    assets = sa.Table("project_assets", sa.MetaData(), autoload_with=connection)
+    rows = connection.execute(
+        sa.select(assets.c.id, assets.c["metadata"]).where(
+            assets.c.asset_type == "product_image"
         )
+    ).mappings()
+    unverified_ids = [
+        row["id"]
+        for row in rows
+        if not isinstance(row["metadata"], dict) or row["metadata"].get("verified") is not True
+    ]
+    if unverified_ids:
+        connection.execute(
+            assets.update()
+            .where(assets.c.id.in_(unverified_ids))
+            .values(asset_type="legacy_unverified_image")
+        )
+
+    _ensure_unique_thread_index(connection)
+
+
+def _ensure_unique_thread_index(connection: sa.Connection) -> None:
+    indexes = sa.inspect(connection).get_indexes("creative_runs")
+    thread_index = next(
+        (index for index in indexes if index.get("name") == "ix_creative_runs_thread_id"),
+        None,
+    )
+    if thread_index and thread_index.get("unique"):
+        return
+    if thread_index:
+        op.drop_index("ix_creative_runs_thread_id", table_name="creative_runs")
+    op.create_index(
+        "ix_creative_runs_thread_id",
+        "creative_runs",
+        ["thread_id"],
+        unique=True,
     )
 
 

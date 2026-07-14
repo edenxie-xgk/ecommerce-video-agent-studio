@@ -7,6 +7,7 @@ from pathlib import Path
 from app.agents.prompts import (
     GENERATE_CREATIVE_DRAFT_PROMPT_REF,
     PROMPT_REGISTRY,
+    REVIEW_CREATIVE_CLAIMS_PROMPT_REF,
     load_prompt_template,
 )
 
@@ -24,6 +25,15 @@ def test_generate_creative_draft_prompt_loads_from_versioned_resource() -> None:
     assert template.owner == "agents"
     assert "15 秒" in template.system_prompt
     assert "JSON schema" in template.system_prompt
+
+
+def test_review_creative_claims_prompt_loads_from_versioned_resource() -> None:
+    template = load_prompt_template(REVIEW_CREATIVE_CLAIMS_PROMPT_REF)
+
+    assert template.key == "review_creative_claims"
+    assert template.version == "v1"
+    assert "confirmed_facts" in template.system_prompt
+    assert "evidence_key" in template.system_prompt
 
 
 def test_prompt_registry_points_to_existing_markdown_files() -> None:

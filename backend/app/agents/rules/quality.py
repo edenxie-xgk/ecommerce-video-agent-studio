@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from functools import partial
+import re
 from typing import Literal, TypeAlias
 
+from app.agents.modeling.contracts import SemanticClaimReview
 from app.application.creative_agent import (
     CreativeConcept,
     CreativeDraft,
@@ -22,6 +24,32 @@ SYSTEM_RISKY_REPLACEMENTS = {
     "永久": "长期",  # 改为时间范围表达。
     "治疗": "改善使用体验",  # 改为使用体验表达。
 }
+
+# 可确定识别且不应依赖模型判断的高风险商品声明模式。
+HIGH_RISK_CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "ranking_claim",
+        re.compile(
+            r"(?:(?:全网|行业|全国|全球)(?:销量|排名)?(?:第一|冠军|领先)"
+            r"|(?:销量|排名)(?:第一|冠军)|行业天花板|遥遥领先)"
+        ),
+    ),
+    (
+        "certification_claim",
+        re.compile(r"(?:官方|权威|国家|国际).{0,8}(?:认证|认可|背书)"),
+    ),
+    (
+        "numeric_parameter_claim",
+        re.compile(
+            r"(?:\d+(?:\.\d+)?|[一二两三四五六七八九十百]+)\s*"
+            r"(?:%|米|小时|天|分钟|年|次|倍|毫升|ml|克|kg|公斤)"
+        ),
+    ),
+    (
+        "efficacy_claim",
+        re.compile(r"(?:提升|降低|增加|改善|见效|治愈).{0,12}(?:免疫|疾病|症状|\d+%)"),
+    ),
+)
 
 # ---------------------------------------------------------------------------
 # 扫描字段注册表
@@ -101,6 +129,7 @@ def evaluate_concept(
     product_summary: str,
     expected_duration: int,
     forbidden_words: list[str],
+    confirmed_facts: list[str] | None = None,
 ) -> QualityEvaluation:
     """执行确定性的时长、商品名称引用和风险表达质量门禁。"""
 
@@ -116,7 +145,7 @@ def evaluate_concept(
         conversion_clarity -= 15
         issues.append(
             QualityIssue(
-                severity="warning",
+                severity="blocked",
                 code="duration_mismatch",
                 message=f"{concept.title} 的镜头总时长为 {duration} 秒。",
                 recommendation=f"调整为 {expected_duration} 秒。",
@@ -159,6 +188,25 @@ def evaluate_concept(
             )
         )
 
+    unsupported_patterns = detect_unconfirmed_claim_patterns(
+        flattened_copy,
+        confirmed_facts=confirmed_facts or [],
+    )
+    if unsupported_patterns:
+        compliance -= min(60, len(unsupported_patterns) * 20)
+        issues.append(
+            QualityIssue(
+                severity="blocked",
+                code="unsupported_claim_pattern",
+                message=(
+                    f"{concept.title} 检测到缺少确认依据的高风险声明："
+                    + "、".join(claim for _, claim in unsupported_patterns)
+                    + "。"
+                ),
+                recommendation="删除该声明，或先把对应参数、认证或功效加入已确认商品事实。",
+            )
+        )
+
     scores = {
         "product_fidelity": max(fidelity, 0),
         "platform_fit": platform_fit,
@@ -168,6 +216,108 @@ def evaluate_concept(
     return QualityEvaluation.from_scores(
         dimension_scores=scores,
         issues=issues,
+    )
+
+
+def detect_unconfirmed_claim_patterns(
+    text: str,
+    *,
+    confirmed_facts: list[str],
+) -> list[tuple[str, str]]:
+    """返回规则命中且未被任何已确认事实原文支持的高风险声明。"""
+
+    normalized_facts = [fact.strip().lower() for fact in confirmed_facts if fact.strip()]
+    detected: list[tuple[str, str]] = []
+    for code, pattern in HIGH_RISK_CLAIM_PATTERNS:
+        for match in pattern.finditer(text):
+            claim = match.group(0).strip()
+            normalized_claim = claim.lower()
+            if any(normalized_claim in fact for fact in normalized_facts):
+                continue
+            item = (code, claim)
+            if item not in detected:
+                detected.append(item)
+    return detected
+
+
+def apply_semantic_claim_review(
+    evaluation: QualityEvaluation,
+    *,
+    review: SemanticClaimReview,
+    confirmed_facts: dict[str, str],
+) -> QualityEvaluation:
+    """把模型审核转换为服务端问题，并由确定性评分规则重新计算通过状态。"""
+
+    semantic_issues: list[QualityIssue] = []
+    for assessment in review.assessments:
+        evidence_value = confirmed_facts.get(assessment.evidence_key or "")
+        evidence_is_valid = evidence_value is not None and _normalize_claim(
+            assessment.text
+        ) == _normalize_claim(evidence_value)
+        if assessment.status == "supported" and evidence_is_valid:
+            continue
+
+        if assessment.status == "supported":
+            code = "invalid_claim_evidence"
+            message = (
+                f"声明“{assessment.text}”引用了无效或不等值的确认事实："
+                f"{assessment.evidence_key or '未提供'}。"
+            )
+        elif assessment.status == "unsupported":
+            code = "unsupported_semantic_claim"
+            message = f"声明“{assessment.text}”没有已确认商品事实支持。"
+        else:
+            code = "ambiguous_semantic_claim"
+            message = f"声明“{assessment.text}”存在强化或证据不足。"
+        semantic_issues.append(
+            QualityIssue(
+                severity="blocked",
+                code=code,
+                message=f"{message} 位置：{assessment.field_path}。",
+                recommendation="删除或收敛该声明，或补充可追溯的确认事实后重新审核。",
+            )
+        )
+
+    if not semantic_issues:
+        return evaluation
+    scores = dict(evaluation.dimension_scores)
+    scores["product_fidelity"] = max(0, scores["product_fidelity"] - 20)
+    scores["compliance"] = max(0, scores["compliance"] - 30)
+    issues = [*evaluation.issues, *semantic_issues]
+    return QualityEvaluation.from_scores(
+        dimension_scores=scores,
+        issues=issues,
+        recommended_changes=list(
+            dict.fromkeys(
+                [*evaluation.recommended_changes, *(issue.recommendation for issue in semantic_issues)]
+            )
+        ),
+    )
+
+
+def _normalize_claim(value: str) -> str:
+    """移除不影响事实含义的空白和标点，供证据原文执行保守等值比较。"""
+
+    return re.sub(r"[\s，,。.!！?？、;；:：\-]+", "", value).lower()
+
+
+def semantic_review_unavailable(evaluation: QualityEvaluation) -> QualityEvaluation:
+    """外部模型草案无法完成语义复核时采用 fail-closed 结果。"""
+
+    issue = QualityIssue(
+        severity="blocked",
+        code="semantic_review_unavailable",
+        message="外部模型生成的草案未能完成商品声明语义审核。",
+        recommendation="恢复审核模型后重试，或改用本地确定性方案。",
+    )
+    scores = dict(evaluation.dimension_scores)
+    scores["compliance"] = max(0, scores["compliance"] - 30)
+    return QualityEvaluation.from_scores(
+        dimension_scores=scores,
+        issues=[*evaluation.issues, issue],
+        recommended_changes=list(
+            dict.fromkeys([*evaluation.recommended_changes, issue.recommendation])
+        ),
     )
 
 

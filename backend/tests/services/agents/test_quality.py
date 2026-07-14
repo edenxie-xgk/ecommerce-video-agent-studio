@@ -124,6 +124,37 @@ def test_scanner_and_rewriter_share_the_same_reviewable_text_fields() -> None:
     assert [shot.duration_seconds for shot in rewritten.shots] == [3, 7, 5]
 
 
+def test_deterministic_gate_blocks_unconfirmed_ranking_certification_and_parameter_claims() -> None:
+    concept = _concept("concept-1", "ordinary")
+    concept.hook = "全网销量第一，官方认证，防水十米"
+
+    evaluation = evaluate_concept(
+        concept=concept,
+        product_summary="Product",
+        expected_duration=15,
+        forbidden_words=[],
+        confirmed_facts=["ordinary selling point"],
+    )
+
+    assert not evaluation.passed
+    assert any(issue.code == "unsupported_claim_pattern" for issue in evaluation.issues)
+
+
+def test_deterministic_gate_accepts_parameter_claim_confirmed_verbatim() -> None:
+    concept = _concept("concept-1", "ordinary")
+    concept.hook = "防水十米"
+
+    evaluation = evaluate_concept(
+        concept=concept,
+        product_summary="Product",
+        expected_duration=15,
+        forbidden_words=[],
+        confirmed_facts=["防水十米"],
+    )
+
+    assert evaluation.passed
+
+
 def test_revise_draft_preserves_existing_normalization_and_protection_behavior() -> None:
     marker = "restricted"
     draft = _draft(marker, durations=(1, 1, 1))

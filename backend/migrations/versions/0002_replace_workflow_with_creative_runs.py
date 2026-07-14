@@ -18,6 +18,17 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # 无约束归档表让旧记录跨过 creative_runs 过渡期，并避免与 0005 的新约束重名。
+    op.execute(
+        sa.text("CREATE TABLE legacy_0001_workflow_runs AS SELECT * FROM workflow_runs")
+    )
+    op.execute(
+        sa.text(
+            "CREATE TABLE legacy_0001_workflow_node_runs AS SELECT * FROM workflow_node_runs"
+        )
+    )
+    op.execute(sa.text("CREATE TABLE legacy_0001_agent_runs AS SELECT * FROM agent_runs"))
+
     op.create_table(
         "creative_runs",
         sa.Column("id", sa.Integer(), primary_key=True),

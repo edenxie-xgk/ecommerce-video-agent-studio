@@ -2,8 +2,9 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import text
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import MetaData, Table, create_engine, inspect, select, text
+from sqlalchemy.engine import Connection
+from sqlalchemy.engine.reflection import Inspector
 
 from app.core.config import ensure_local_var_dir, get_settings
 
@@ -13,7 +14,9 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
 # 早期本地库可能没有 Alembic 版本记录，但已经具备首版业务表。
 LEGACY_BASE_REVISION = "0001_initial_workflow_tables"
-SIMPLIFIED_CREATIVE_RUN_REVISION = "0004_verified_assets"
+CREATIVE_RUN_BASE_REVISION = "0002_creative_runs"
+CREATIVE_RUN_THREAD_REVISION = "0003_langgraph_thread"
+VERIFIED_ASSET_REVISION = "0004_verified_assets"
 
 # 如果这些首版业务表都存在，就可以把旧库安全标记到 LEGACY_BASE_REVISION。
 INITIAL_BUSINESS_TABLES = {
@@ -61,20 +64,57 @@ def _stamp_existing_initial_schema(config: Config) -> None:
             return
 
         if "alembic_version" not in table_names:
-            revision_to_stamp = (
-                LEGACY_BASE_REVISION if has_initial_tables else SIMPLIFIED_CREATIVE_RUN_REVISION
+            revision_to_stamp = _detect_existing_revision(
+                connection,
+                inspector,
+                has_initial_tables=has_initial_tables,
             )
         else:
             current_versions = list(
                 connection.execute(text("select version_num from alembic_version"))
             )
             if not current_versions:
-                revision_to_stamp = (
-                    LEGACY_BASE_REVISION
-                    if has_initial_tables
-                    else SIMPLIFIED_CREATIVE_RUN_REVISION
+                revision_to_stamp = _detect_existing_revision(
+                    connection,
+                    inspector,
+                    has_initial_tables=has_initial_tables,
                 )
 
     # 先关闭检查连接，再由 Alembic 建立自己的写连接，避免 SQLite 锁等待。
     if revision_to_stamp:
         command.stamp(config, revision_to_stamp)
+
+
+def _detect_existing_revision(
+    connection: Connection,
+    inspector: Inspector,
+    *,
+    has_initial_tables: bool,
+) -> str:
+    if has_initial_tables:
+        return LEGACY_BASE_REVISION
+
+    creative_columns = {column["name"] for column in inspector.get_columns("creative_runs")}
+    if "thread_id" not in creative_columns:
+        return CREATIVE_RUN_BASE_REVISION
+    if not _has_unique_thread_index(inspector) or _has_unverified_product_images(connection):
+        return CREATIVE_RUN_THREAD_REVISION
+    return VERIFIED_ASSET_REVISION
+
+
+def _has_unique_thread_index(inspector: Inspector) -> bool:
+    return any(
+        index.get("unique") and index.get("column_names") == ["thread_id"]
+        for index in inspector.get_indexes("creative_runs")
+    )
+
+
+def _has_unverified_product_images(connection: Connection) -> bool:
+    assets = Table("project_assets", MetaData(), autoload_with=connection)
+    rows = connection.execute(
+        select(assets.c["metadata"]).where(assets.c.asset_type == "product_image")
+    ).scalars()
+    return any(
+        not isinstance(metadata, dict) or metadata.get("verified") is not True
+        for metadata in rows
+    )
