@@ -1,0 +1,39 @@
+# 后端 Python 项目配置。
+# 依赖保持精简，Agent 控制流统一使用 LangGraph。
+
+[project]
+name = "ecommerce-video-agent-studio-backend"
+version = "0.1.0"
+description = "Backend service for Ecommerce Video Agent Studio."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "alembic>=1.13,<2.0",
+    "fastapi[standard]>=0.115,<1.0",
+    "langgraph>=1.0,<2.0",
+    "langgraph-checkpoint-sqlite>=3.0,<4.0",
+    "pillow>=11.0,<13.0",
+    "psycopg[binary,pool]>=3.2,<4.0",
+    "pydantic>=2.8,<3.0",
+    "pydantic-settings>=2.4,<3.0",
+    "sqlmodel>=0.0.22,<0.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0,<9.0",
+    "ruff>=0.5,<1.0",
+]
+
+[tool.uv]
+# 当前后端先作为应用服务开发，不作为可安装 Python 包发布。
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["app", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
