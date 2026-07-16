@@ -1,7 +1,7 @@
 from collections.abc import Callable
 
 from app.agents.planner import CreativePlanner
-from app.agents.rules.quality import iter_reviewable_text
+from app.agents.nodes.prompt_check import iter_reviewable_text
 from app.application.creative_agent import (
     CreativeAgentResult,
     CreativeBriefInput,

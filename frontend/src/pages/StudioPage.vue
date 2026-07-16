@@ -58,7 +58,7 @@ watch(
         campaignGoals[project.id] = DEFAULT_CAMPAIGN_GOAL
       }
     }
-    briefForm.product_name = brief?.product_name === '未命名商品' ? '' : brief?.product_name ?? ''
+    briefForm.product_name = brief?.product_name ?? ''
     briefForm.selling_points_text = brief?.selling_points_text ?? ''
     briefForm.target_audience_text = brief?.target_audience_text ?? ''
     briefForm.brand_tone = brief?.brand_tone ?? ''

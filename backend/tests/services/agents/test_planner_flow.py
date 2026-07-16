@@ -81,7 +81,7 @@ class UnexpectedCallProvider:
         raise AssertionError("provider should not be called")
 
 
-def test_planner_uses_local_strategy_without_confirmed_selling_points(
+def test_planner_uses_local_strategy_without_selling_points(
     run_input_factory: Callable[..., CreativeRunInput],
     complete_brief: CreativeBriefInput,
 ) -> None:

@@ -9,7 +9,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agents.graph import build_creative_graph
 from app.agents.modeling.provider import CreativeModelProvider, OpenAICompatibleProvider
-from app.agents.state import AgentState, PlannerContext, read_bundle
+from app.agents.state import AgentState, PlannerContext, build_checkpoint_serializer
 from app.application.creative_agent import (
     CreativeAgentResult,
     CreativeRunInput,
@@ -32,7 +32,9 @@ class CreativePlanner:
         # Provider 是可替换依赖：生产环境走 OpenAI-compatible，测试可以注入假的 Provider。
         self._provider = provider or OpenAICompatibleProvider()
         # 图编译后可复用；checkpoint 决定状态存在内存还是 SQLite。
-        self._graph = build_creative_graph(checkpointer or InMemorySaver())
+        self._graph = build_creative_graph(
+            checkpointer or InMemorySaver(serde=build_checkpoint_serializer())
+        )
 
     def run(
         self,
@@ -42,6 +44,7 @@ class CreativePlanner:
     ) -> CreativeAgentResult:
         """创建新图执行；传入 execution_id 时采用应用层生成的新运行标识。"""
 
+        self._assert_ready_for_agent(run_input)
         effective_execution_id = execution_id or uuid4().hex
         config = self._config(effective_execution_id)
         # 新运行使用新的 checkpoint 线程，保证业务运行之间状态独立。
@@ -49,11 +52,8 @@ class CreativePlanner:
             raise ValueError("execution_id 已存在运行状态；新运行必须使用新的标识。")
         state: AgentState = self._graph.invoke(
             {
-                # 初始状态保存可持久化的业务输入快照。
-                "project": run_input.project.model_dump(mode="json"),
-                "brief": (run_input.brief.model_dump(mode="json") if run_input.brief else None),
-                "assets": [asset.model_dump(mode="json") for asset in run_input.assets],
-                "campaign_goal": run_input.campaign_goal,
+                # 初始状态保存本次运行的业务输入。
+                "run_input": run_input,
                 "provider_key": "local",
                 "model_key": None,
                 "revision_count": 0,
@@ -70,17 +70,28 @@ class CreativePlanner:
         # 业务层叫 execution_id，LangGraph 原生配置字段叫 thread_id。
         return {"configurable": {"thread_id": execution_id}}
 
+    def _assert_ready_for_agent(self, run_input: CreativeRunInput) -> None:
+        """检查直接调用端口时需要满足的启动硬门槛。"""
+
+        missing: list[str] = []
+        product_name = (run_input.brief.product_name if run_input.brief else "").strip()
+        if not product_name:
+            missing.append("product_name")
+        if not run_input.assets:
+            missing.append("product_images")
+        if missing:
+            raise ValueError("Agent 输入资料不完整：" + "、".join(missing))
+
     def _result_from_state(
         self,
         state: AgentState,
         *,
         execution_id: str,
     ) -> CreativeAgentResult:
-        """校验最终 bundle，并投影业务层关心的运行元数据。"""
+        """投影业务层关心的运行元数据。"""
 
-        bundle = read_bundle(state)
         return CreativeAgentResult(
-            bundle=bundle,
+            bundle=state["bundle"],
             provider_key=str(state.get("provider_key") or "local"),
             model_key=state.get("model_key"),
             execution_id=execution_id,

@@ -1,4 +1,4 @@
-from app.agents.rules.quality import (
+from app.agents.nodes.prompt_check import (
     REVIEWABLE_CONCEPT_TEXT_FIELDS,
     REVIEWABLE_SHOT_TEXT_FIELDS,
     evaluate_concept,

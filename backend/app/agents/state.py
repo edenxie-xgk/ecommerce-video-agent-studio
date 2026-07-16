@@ -1,19 +1,22 @@
-"""声明 LangGraph 持久化状态、运行时上下文和阶段产物读取方式。
+"""声明 LangGraph 持久化状态和运行时上下文。
 
 读这个文件时关注一个分界：
-- `AgentState` 会进入 checkpoint，因此字段必须是可 JSON 化、可恢复的快照。
+- `AgentState` 保存本次图执行会流转的业务对象。
 - `PlannerContext` 承载当前进程里的运行依赖，例如模型 Provider。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, NotRequired, TypedDict
+from typing import NotRequired, TypedDict
+
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 
 from app.agents.modeling.provider import CreativeModelProvider
 from app.application.creative_agent import (
     CreativeDecisionBundle,
     CreativeDraft,
+    CreativeRunInput,
     ProductAnalysis,
     QualityEvaluation,
 )
@@ -39,48 +42,36 @@ class PlannerContext:
 class AgentState(TypedDict):
     """LangGraph 状态；初始字段必填，阶段产物由对应节点逐步补充。"""
 
-    # 输入快照来自应用层 DTO，checkpoint 重放时使用同一份业务输入。
-    project: dict[str, Any]  # 项目事实快照。
-    brief: dict[str, Any] | None  # 用户当前确认的商品资料快照。
-    assets: list[dict[str, Any]]  # 已验证且可用于镜头规划的图片引用快照。
-    campaign_goal: str  # 本次创意运行需要达成的营销目标。
+    # 业务输入来自应用层 DTO，是整条图执行的事实来源。
+    run_input: CreativeRunInput  # 本次运行的完整输入。
 
-    # 生成元数据也进 checkpoint，方便恢复后继续投影业务运行结果。
-    provider_key: str  # 实际完成生成的 Provider 标识。
-    model_key: str | None  # 实际完成生成的模型标识。
-    revision_count: int  # 质量阶段已自动修订的次数，当前上限为一次。
+    # 生成元数据随状态一起流转，用于最终投影业务运行结果。
+    provider_key: str  # 完成创意脚本生成的 Provider 标识。
+    model_key: str | None  # 完成创意脚本生成的模型标识。
+    revision_count: int  # 当前自动质量修订次数。
 
-    # 阶段产物用 dict 保存，读取时通过下面的 read_* 函数重新校验为 Pydantic 模型。
-    analysis: NotRequired[dict[str, Any]]  # product_understanding 产生的商品分析。
-    draft: NotRequired[dict[str, Any]]  # creative_script 产生的模型或本地草案。
-    evaluation: NotRequired[dict[str, Any]]  # prompt_check 产生的质量评估。
-    bundle: NotRequired[dict[str, Any]]  # 对应用层和数据库公开的最终决策。
+    # 阶段产物由对应节点生成，后续节点直接读取业务模型对象。
+    analysis: NotRequired[ProductAnalysis]  # product_understanding 产生的商品分析。
+    draft: NotRequired[CreativeDraft]  # creative_script 产生的模型或本地草案。
+    evaluation: NotRequired[QualityEvaluation]  # prompt_check 产生的质量评估。
+    bundle: NotRequired[CreativeDecisionBundle]  # 对应用层和数据库公开的最终决策。
 
 
 # ---------------------------------------------------------------------------
-# 阶段产物读取：dict -> 业务模型
+# Checkpoint 序列化
 # ---------------------------------------------------------------------------
 
 
-def read_analysis(state: AgentState) -> ProductAnalysis:
-    """读取商品分析阶段产物，并把 checkpoint dict 重新校验成业务模型。"""
-
-    return ProductAnalysis.model_validate(state["analysis"])
-
-
-def read_draft(state: AgentState) -> CreativeDraft:
-    """读取创意生成阶段产物，并校验为当前草案契约。"""
-
-    return CreativeDraft.model_validate(state["draft"])
+CHECKPOINT_MODEL_TYPES = (
+    ("app.application.creative_agent_port", "CreativeRunInput"),
+    ("app.application.creative_plan", "ProductAnalysis"),
+    ("app.application.creative_plan", "CreativeDraft"),
+    ("app.application.creative_decision", "QualityEvaluation"),
+    ("app.application.creative_decision", "CreativeDecisionBundle"),
+)
 
 
-def read_evaluation(state: AgentState) -> QualityEvaluation:
-    """读取 Prompt Check 评估产物，并校验为质量门禁契约。"""
+def build_checkpoint_serializer() -> JsonPlusSerializer:
+    """创建允许恢复 AgentState 业务模型的 LangGraph 序列化器。"""
 
-    return QualityEvaluation.model_validate(state["evaluation"])
-
-
-def read_bundle(state: AgentState) -> CreativeDecisionBundle:
-    """读取最终决策阶段产物，作为返回 API 和写入数据库前的最后一道校验。"""
-
-    return CreativeDecisionBundle.model_validate(state["bundle"])
+    return JsonPlusSerializer(allowed_msgpack_modules=CHECKPOINT_MODEL_TYPES)

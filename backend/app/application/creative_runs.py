@@ -212,7 +212,7 @@ class CreativeRunService:
 
         missing: list[str] = []
         product_name = (brief.product_name if brief else "").strip()
-        if not product_name or product_name == "未命名商品":
+        if not product_name:
             missing.append("商品名称")
         if not assets:
             missing.append("至少一张已验证商品图片")

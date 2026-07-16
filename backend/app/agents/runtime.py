@@ -10,6 +10,7 @@ from langgraph.checkpoint.sqlite import SqliteSaver
 from app.core.config import ensure_local_var_dir, get_settings
 from app.agents.planner import CreativePlanner
 from app.agents.modeling.provider import OpenAICompatibleProvider
+from app.agents.state import build_checkpoint_serializer
 from app.application.creative_agent import CreativeAgentPort
 
 
@@ -24,7 +25,7 @@ def get_creative_agent() -> CreativeAgentPort:
         settings.langgraph_checkpoint_path,
         check_same_thread=False,
     )
-    checkpointer = SqliteSaver(connection)
+    checkpointer = SqliteSaver(connection, serde=build_checkpoint_serializer())
     # setup 由官方 checkpointer 创建自身表结构。
     checkpointer.setup()
     return CreativePlanner(

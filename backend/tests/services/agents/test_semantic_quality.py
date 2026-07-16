@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from app.agents.modeling.provider import ModelJsonResponse, ProviderTransientError
 from app.agents.planner import CreativePlanner
-from app.agents.rules.drafts import build_local_draft
+from app.agents.nodes.creative_script import build_local_draft
 from app.application.creative_agent import (
     CreativeBriefInput,
     CreativeProjectInput,

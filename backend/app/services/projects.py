@@ -60,16 +60,17 @@ class ProjectService:
         project_id: int,
         payload: ProductBriefInput,
     ) -> ProductBrief:
+        product_name = (payload.product_name or "").strip()
         brief = self._session.exec(
             select(ProductBrief).where(ProductBrief.project_id == project_id)
         ).first()
         if brief is None:
             brief = ProductBrief(
                 project_id=project_id,
-                product_name=payload.product_name or "未命名商品",
+                product_name=product_name,
             )
 
-        brief.product_name = payload.product_name or "未命名商品"
+        brief.product_name = product_name
         brief.selling_points_text = payload.selling_points_text.strip()
         brief.target_audience_text = payload.target_audience_text.strip()
         brief.brand_tone = payload.brand_tone.strip()

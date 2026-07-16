@@ -5,15 +5,18 @@ from app.models.project import VideoProject
 from app.services.projects import ProductBriefInput, ProjectService
 
 
-def test_saving_brief_marks_project_input_ready_without_running_agent() -> None:
+def make_session() -> Session:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
     SQLModel.metadata.create_all(engine)
+    return Session(engine)
 
-    with Session(engine) as session:
+
+def test_saving_brief_marks_project_input_ready_without_running_agent() -> None:
+    with make_session() as session:
         project = VideoProject(title="Input ready test", status="draft")
         session.add(project)
         session.commit()
@@ -26,3 +29,18 @@ def test_saving_brief_marks_project_input_ready_without_running_agent() -> None:
 
         session.refresh(project)
         assert project.status == "input_ready"
+
+
+def test_empty_product_name_is_saved_as_empty_input() -> None:
+    with make_session() as session:
+        project = VideoProject(title="Empty product name")
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+
+        brief = ProjectService(session).upsert_product_brief(
+            project.id or 0,
+            ProductBriefInput(product_name="  "),
+        )
+
+        assert brief.product_name == ""

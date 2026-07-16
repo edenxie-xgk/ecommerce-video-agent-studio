@@ -14,7 +14,7 @@ def build_authoritative_draft(
     *,
     payload: dict[str, object],
     analysis: ProductAnalysis,
-    confirmed_selling_points: list[str],
+    allowed_selling_points: list[str],
 ) -> CreativeDraft:
     """校验模型创意内容，并组装完整的服务端草案。"""
 
@@ -24,14 +24,14 @@ def build_authoritative_draft(
     except ValidationError as exc:
         raise ProviderResponseError("模型结果不符合创意草案契约。") from exc
 
-    allowed_selling_points = {
-        selling_point.strip() for selling_point in confirmed_selling_points if selling_point.strip()
+    selling_point_whitelist = {
+        selling_point.strip() for selling_point in allowed_selling_points if selling_point.strip()
     }
     unsupported_selling_points = sorted(
         {
             concept.primary_selling_point.strip()
             for concept in generated.concepts
-            if concept.primary_selling_point.strip() not in allowed_selling_points
+            if concept.primary_selling_point.strip() not in selling_point_whitelist
         }
     )
     if unsupported_selling_points:
