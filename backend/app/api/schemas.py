@@ -58,14 +58,6 @@ class ProjectAssetResponse(BaseModel):
     created_at: str = Field(description="素材创建时间。")
 
 
-class CreativePlanRequest(BaseModel):
-    campaign_goal: str = Field(
-        default="让目标用户快速理解商品价值并产生进一步了解意愿",
-        max_length=500,
-        description="本次创意决策需要达成的营销目标。",
-    )
-
-
 class CreativeRunResponse(BaseModel):
     id: int = Field(description="创意运行 ID。")
     project_id: int = Field(description="所属项目 ID。")

@@ -12,22 +12,30 @@ from app.agents.nodes import (
     REVIEW_COST_GATE,
     STORYBOARD_PROMPT,
 )
-from app.agents.nodes.product_understanding import product_understanding_node
 from app.agents.nodes.creative_script import creative_script_node, generation_error_handler
+from app.agents.nodes.product_understanding import (
+    product_understanding_error_handler,
+    product_understanding_node,
+)
 from app.agents.nodes.prompt_check import prompt_check_node
 from app.agents.nodes.review_cost_gate import review_cost_gate_node
 from app.agents.nodes.storyboard_prompt import storyboard_prompt_node
-from app.agents.state import AgentState, PlannerContext
+from app.agents.state import AgentState
 
 
 def build_creative_graph(checkpointer: BaseCheckpointSaver[str]):
     """编译商品理解、脚本、分镜、Prompt 检测和审核门禁自动节点。"""
 
-    graph = StateGraph(AgentState, context_schema=PlannerContext)
-    # 商品理解生成 ProductAnalysis，作为后续脚本和审核判断的事实基础。
+    graph = StateGraph(AgentState)
+    # 商品理解优先走模型，失败时只使用用户已确认资料形成保守 ProductAnalysis。
     graph.add_node(
         PRODUCT_UNDERSTANDING,
         product_understanding_node,
+        retry_policy=RetryPolicy(
+            max_attempts=2,
+            retry_on=(RetryableModelGenerationError,),
+        ),
+        error_handler=product_understanding_error_handler,
         destinations=(CREATIVE_SCRIPT,),
     )
     # 脚本节点配置模型错误重试，并在可分类失败时回落到本地确定性草案。
@@ -52,4 +60,5 @@ def build_creative_graph(checkpointer: BaseCheckpointSaver[str]):
     graph.add_edge(START, PRODUCT_UNDERSTANDING)
     graph.add_edge(REVIEW_COST_GATE, END)
     return graph.compile(checkpointer=checkpointer, name="commerce_creative_agent")
+
 

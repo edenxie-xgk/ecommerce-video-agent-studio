@@ -1,4 +1,4 @@
-from collections.abc import Callable
+﻿from collections.abc import Callable
 
 import pytest
 
@@ -60,13 +60,15 @@ class FailingProvider:
 
 def test_model_node_retries_then_routes_to_local_fallback(
     run_input_factory: Callable[..., CreativeRunInput],
+    use_agent_provider,
 ) -> None:
     provider = FailingProvider()
-    planner = CreativePlanner(provider=provider)
+    use_agent_provider(provider)
+    planner = CreativePlanner()
 
     result = planner.run(run_input_factory())
 
-    assert provider.calls == 2
+    assert provider.calls == 4
     assert result.provider_key == "local"
     assert result.bundle.action == "review_plan"
 
@@ -81,21 +83,22 @@ class UnexpectedCallProvider:
         raise AssertionError("provider should not be called")
 
 
-def test_planner_uses_local_strategy_without_selling_points(
+def test_planner_rejects_missing_selling_points_before_agent_run(
     run_input_factory: Callable[..., CreativeRunInput],
     complete_brief: CreativeBriefInput,
+    use_agent_provider,
 ) -> None:
     provider = UnexpectedCallProvider()
+    use_agent_provider(provider)
     for empty_value in ("", "  ,，、;；\n"):
         brief_without_selling_points = complete_brief.model_copy(
             update={"selling_points_text": empty_value}
         )
-        result = CreativePlanner(provider=provider).run(
-            run_input_factory(brief=brief_without_selling_points)
-        )
+        with pytest.raises(ValueError, match="selling_points"):
+            CreativePlanner().run(
+                run_input_factory(brief=brief_without_selling_points)
+            )
 
-        assert result.provider_key == "local"
-        assert result.bundle.action == "review_plan"
     assert provider.calls == 0
 
 
@@ -112,11 +115,13 @@ class ProgrammingErrorProvider:
 
 def test_model_node_does_not_retry_or_hide_unknown_programming_errors(
     run_input_factory: Callable[..., CreativeRunInput],
+    use_agent_provider,
 ) -> None:
     provider = ProgrammingErrorProvider()
+    use_agent_provider(provider)
 
     with pytest.raises(RuntimeError, match="unexpected provider adapter bug"):
-        CreativePlanner(provider=provider).run(run_input_factory())
+        CreativePlanner().run(run_input_factory())
 
     assert provider.calls == 1
 
@@ -134,12 +139,14 @@ class RequestErrorProvider:
 
 def test_non_retryable_provider_error_falls_back_after_one_attempt(
     run_input_factory: Callable[..., CreativeRunInput],
+    use_agent_provider,
 ) -> None:
     provider = RequestErrorProvider()
+    use_agent_provider(provider)
 
-    result = CreativePlanner(provider=provider).run(run_input_factory())
+    result = CreativePlanner().run(run_input_factory())
 
-    assert provider.calls == 1
+    assert provider.calls == 2
     assert result.provider_key == "local"
     assert result.bundle.action == "review_plan"
 

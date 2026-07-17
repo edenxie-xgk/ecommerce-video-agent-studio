@@ -6,7 +6,6 @@ import pytest
 from pydantic import BaseModel
 
 from app.api.schemas import (
-    CreativePlanRequest,
     CreativeRunResponse,
     ProductBriefPayload,
     ProductBriefResponse,
@@ -48,7 +47,6 @@ SCHEMAS: tuple[type[BaseModel], ...] = (
     ProjectCreatePayload,
     ProjectResponse,
     ProjectAssetResponse,
-    CreativePlanRequest,
     CreativeRunResponse,
     ProductAnalysis,
     ShotPlan,

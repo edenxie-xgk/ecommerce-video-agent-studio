@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import re
-
 from langgraph.errors import NodeError
-from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from app.agents.modeling.contracts import GeneratedCreativeDraft
 from app.agents.modeling.generation import build_authoritative_draft
 from app.agents.modeling.provider import ModelGenerationError
+from app.agents.models import config_model
 from app.agents.nodes import STORYBOARD_PROMPT
 from app.agents.prompts import GENERATE_CREATIVE_DRAFT_PROMPT_REF, load_prompt_template
-from app.agents.state import AgentState, PlannerContext
+from app.agents.state import AgentState
 from app.application.creative_agent import (
     CreativeBriefInput,
     CreativeConcept,
@@ -25,29 +23,23 @@ from app.application.creative_agent import (
 )
 
 
-def creative_script_node(
-    state: AgentState,
-    runtime: Runtime[PlannerContext],
-) -> Command:
+def creative_script_node(state: AgentState) -> Command:
     """根据当前 Provider 和已确认事实生成三套创意脚本草案。"""
 
     run_input = state["run_input"]
     analysis = state["analysis"]
     brief = run_input.brief
-    selling_points = [
-        part.strip(" -。.!！?？")
-        for part in re.split(r"[\n,，、;；]+", brief.selling_points_text if brief else "")
-        if part.strip(" -。.!！?？")
-    ]
-    if not runtime.context.provider.configured or not selling_points:
-        # 本地策略使用已确认事实生成草案，适合模型配置缺失或卖点白名单为空的场景。
+    selling_points = brief.selling_points() if brief else []
+    provider = config_model.creative_script_model()
+    if not provider.configured or not selling_points:
+        # 本地策略使用已确认事实生成草案，适合模型配置缺失的场景。
         return Command(
             update=_local_generation_update(run_input=run_input, analysis=analysis),
             goto=STORYBOARD_PROMPT,
         )
 
     prompt_template = load_prompt_template(GENERATE_CREATIVE_DRAFT_PROMPT_REF)
-    response = runtime.context.provider.generate_json(
+    response = provider.generate_json(
         system_prompt=prompt_template.system_prompt,
         input_payload=build_model_input(run_input, selling_points=selling_points),
         json_schema=GeneratedCreativeDraft.model_json_schema(),
@@ -114,16 +106,8 @@ def build_model_input(
     project = run_input.project
     brief = run_input.brief
     assets = run_input.assets
-    target_audience = [
-        part.strip(" -。.!！?？")
-        for part in re.split(r"[\n,，、;；]+", brief.target_audience_text if brief else "")
-        if part.strip(" -。.!！?？")
-    ]
-    forbidden_expressions = [
-        part.strip(" -。.!！?？")
-        for part in re.split(r"[\n,，、;；]+", brief.forbidden_words_text if brief else "")
-        if part.strip(" -。.!！?？")
-    ]
+    target_audience = brief.target_audiences() if brief else []
+    forbidden_expressions = brief.forbidden_words() if brief else []
     # 外部模型接收当前创意任务需要的事实集合。
     return {
         "product_name": brief.product_name if brief else "",
@@ -135,8 +119,10 @@ def build_model_input(
         "campaign_goal": run_input.campaign_goal,
         "duration_seconds": project.duration_seconds,
         "aspect_ratio": project.aspect_ratio,
-        "product_image_count": len(assets),
-        "product_asset_ids": [asset.id for asset in assets],
+        "product_image_count": len(
+            [asset for asset in assets if asset.asset_type == "product_image"]
+        ),
+        "product_asset_ids": [asset.id for asset in assets if asset.asset_type == "product_image"],
     }
 
 
@@ -167,7 +153,7 @@ def build_local_draft(
             f"围绕“{goal}”设计三个差异化方向，并优先用商品图片驱动关键镜头，"
             "降低包装和外观失真风险。"
         ),
-        confidence=0.88 if brief and brief.selling_points_text else 0.78,
+        confidence=0.88 if brief and brief.selling_points() else 0.78,
         concepts=concepts,
     )
 
@@ -331,3 +317,8 @@ def _concept(
             ),
         ],
     )
+
+
+
+
+

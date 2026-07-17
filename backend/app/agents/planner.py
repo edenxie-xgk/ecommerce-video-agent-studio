@@ -8,8 +8,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 
 from app.agents.graph import build_creative_graph
-from app.agents.modeling.provider import CreativeModelProvider, OpenAICompatibleProvider
-from app.agents.state import AgentState, PlannerContext, build_checkpoint_serializer
+from app.agents.state import AgentState, build_checkpoint_serializer
 from app.application.creative_agent import (
     CreativeAgentResult,
     CreativeRunInput,
@@ -24,13 +23,10 @@ class CreativePlanner:
 
     def __init__(
         self,
-        provider: CreativeModelProvider | None = None,
         checkpointer: BaseCheckpointSaver[str] | None = None,
     ) -> None:
         """注入 Provider 和 checkpoint，并编译一次可复用的图。"""
 
-        # Provider 是可替换依赖：生产环境走 OpenAI-compatible，测试可以注入假的 Provider。
-        self._provider = provider or OpenAICompatibleProvider()
         # 图编译后可复用；checkpoint 决定状态存在内存还是 SQLite。
         self._graph = build_creative_graph(
             checkpointer or InMemorySaver(serde=build_checkpoint_serializer())
@@ -56,11 +52,11 @@ class CreativePlanner:
                 "run_input": run_input,
                 "provider_key": "local",
                 "model_key": None,
+                "product_understanding_provider_key": "local",
+                "product_understanding_model_key": None,
                 "revision_count": 0,
             },
             config,
-            # Provider 通过运行时 Context 注入，随当前进程配置生效。
-            context=PlannerContext(provider=self._provider),
         )
         return self._result_from_state(state, execution_id=effective_execution_id)
 
@@ -73,12 +69,7 @@ class CreativePlanner:
     def _assert_ready_for_agent(self, run_input: CreativeRunInput) -> None:
         """检查直接调用端口时需要满足的启动硬门槛。"""
 
-        missing: list[str] = []
-        product_name = (run_input.brief.product_name if run_input.brief else "").strip()
-        if not product_name:
-            missing.append("product_name")
-        if not run_input.assets:
-            missing.append("product_images")
+        missing = run_input.missing_required_agent_inputs()
         if missing:
             raise ValueError("Agent 输入资料不完整：" + "、".join(missing))
 
@@ -94,5 +85,10 @@ class CreativePlanner:
             bundle=state["bundle"],
             provider_key=str(state.get("provider_key") or "local"),
             model_key=state.get("model_key"),
+            product_understanding_provider_key=str(
+                state.get("product_understanding_provider_key") or "local"
+            ),
+            product_understanding_model_key=state.get("product_understanding_model_key"),
             execution_id=execution_id,
         )
+

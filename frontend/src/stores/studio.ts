@@ -3,7 +3,6 @@ import {
   api,
   type CreateCreativeRunInput,
   type CreativeRun,
-  type ProductBrief,
   type Project,
   type ProjectAsset,
 } from '../api/client'
@@ -32,9 +31,7 @@ export const useStudioStore = defineStore('studio', {
     projectErrors: {} as ProjectValue<string>,
     projectLoadVersions: {} as ProjectValue<number>,
     pendingProjectLoads: {} as ProjectValue<number>,
-    savingProjectId: null as number | null,
     planningProjectId: null as number | null,
-    uploadingProjectId: null as number | null,
   }),
   getters: {
     selectedProject(state) {
@@ -60,21 +57,11 @@ export const useStudioStore = defineStore('studio', {
       const projectId = state.selectedProjectId
       return projectId !== null && state.pendingProjectLoads[projectId] !== undefined
     },
-    saving(state): boolean {
-      return state.savingProjectId !== null
-    },
     planning(state): boolean {
       return state.planningProjectId !== null
     },
-    uploading(state): boolean {
-      return state.uploadingProjectId !== null
-    },
     operationBusy(state): boolean {
-      return (
-        state.savingProjectId !== null ||
-        state.planningProjectId !== null ||
-        state.uploadingProjectId !== null
-      )
+      return state.planningProjectId !== null
     },
   },
   actions: {
@@ -138,62 +125,20 @@ export const useStudioStore = defineStore('studio', {
         }
       }
     },
-    async persistBrief(projectId: number, payload: ProductBrief) {
-      const brief = await api.updateProductBrief(projectId, payload)
-      assertProjectResponse(projectId, brief.project_id, '商品资料接口')
-      const project = this.projects.find((item) => item.id === projectId)
-      if (project) {
-        project.product_brief = brief
-        project.status = 'input_ready'
-      }
-      return brief
-    },
-    async saveBrief(projectId: number, payload: ProductBrief) {
-      if (this.operationBusy) throw new Error('另一项操作正在进行，请稍后再试。')
-      this.savingProjectId = projectId
-      try {
-        return await this.persistBrief(projectId, payload)
-      } finally {
-        if (this.savingProjectId === projectId) this.savingProjectId = null
-      }
-    },
-    async uploadAsset(projectId: number, file: File) {
-      if (this.operationBusy) throw new Error('另一项操作正在进行，请稍后再试。')
-      this.uploadingProjectId = projectId
-      try {
-        const asset = await api.uploadAsset(projectId, file)
-        assertProjectResponse(projectId, asset.project_id, '素材接口')
-        this.invalidateProjectLoad(projectId)
-        const current = this.assetsByProjectId[projectId] ?? []
-        this.assetsByProjectId[projectId] = [
-          asset,
-          ...current.filter((item) => item.id !== asset.id),
-        ]
-        return asset
-      } finally {
-        if (this.uploadingProjectId === projectId) this.uploadingProjectId = null
-      }
-    },
-    async generatePlan(input: CreateCreativeRunInput, briefPayload: ProductBrief) {
+    async generatePlan(input: CreateCreativeRunInput) {
       if (this.operationBusy) throw new Error('另一项操作正在进行，请稍后再试。')
       const projectId = input.projectId
       this.planningProjectId = projectId
-      this.savingProjectId = projectId
       try {
-        await this.persistBrief(projectId, briefPayload)
-        this.savingProjectId = null
-
-        try {
-          const run = await api.createCreativeRun(input)
-          assertProjectResponse(projectId, run.project_id, '创意运行接口')
-          this.upsertCreativeRun(projectId, run)
-          return run
-        } catch (error) {
-          await this.refreshCreativeRunsAfterFailure(projectId)
-          throw error
-        }
+        const run = await api.createCreativeRun(input)
+        assertProjectResponse(projectId, run.project_id, '创意运行接口')
+        this.upsertCreativeRun(projectId, run)
+        await this.refreshProjectSnapshot(projectId)
+        return run
+      } catch (error) {
+        await this.refreshProjectSnapshot(projectId)
+        throw error
       } finally {
-        if (this.savingProjectId === projectId) this.savingProjectId = null
         if (this.planningProjectId === projectId) this.planningProjectId = null
       }
     },
@@ -210,14 +155,23 @@ export const useStudioStore = defineStore('studio', {
     invalidateProjectLoad(projectId: number) {
       this.projectLoadVersions[projectId] = (this.projectLoadVersions[projectId] ?? 0) + 1
     },
-    async refreshCreativeRunsAfterFailure(projectId: number) {
+    async refreshProjectSnapshot(projectId: number) {
       try {
-        const runs = await api.listCreativeRuns(projectId)
+        const [projects, assets, runs] = await Promise.all([
+          api.listProjects(),
+          api.listAssets(projectId),
+          api.listCreativeRuns(projectId),
+        ])
+        if (!projects.some((project) => project.id === projectId)) return
+        if (assets.some((asset) => asset.project_id !== projectId)) return
         if (runs.some((run) => run.project_id !== projectId)) return
         this.invalidateProjectLoad(projectId)
+        this.projects = projects
+        this.assetsByProjectId[projectId] = assets
         this.creativeRunsByProjectId[projectId] = runs
+        this.bootstrapError = ''
       } catch {
-        // Preserve the original generate error when recovery loading also fails.
+        // 刷新失败不覆盖本次生成接口返回的真实错误，用户可以直接重新提交。
       }
     },
   },

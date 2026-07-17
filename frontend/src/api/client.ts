@@ -163,6 +163,8 @@ export type CreativeRun = {
 export type CreateCreativeRunInput = {
   projectId: number
   campaignGoal: string
+  productBrief: ProductBrief
+  productImages: File[]
 }
 
 export const api = {
@@ -172,26 +174,26 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
-  updateProductBrief: (projectId: number, payload: ProductBrief) =>
-    request<ProductBrief & { id: number; project_id: number }>(`/projects/${projectId}/product-brief`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
   listAssets: (projectId: number) => request<ProjectAsset[]>(`/projects/${projectId}/assets`),
-  uploadAsset: (projectId: number, file: File) => {
+  listCreativeRuns: (projectId: number) =>
+    request<CreativeRun[]>(`/projects/${projectId}/creative-runs`),
+  createCreativeRun: ({
+    projectId,
+    campaignGoal,
+    productBrief,
+    productImages,
+  }: CreateCreativeRunInput) => {
     const form = new FormData()
-    form.set('asset_type', 'product_image')
-    form.set('file', file)
-    return request<ProjectAsset>(`/projects/${projectId}/assets`, {
+    form.set('campaign_goal', campaignGoal)
+    form.set('product_name', productBrief.product_name ?? '')
+    form.set('selling_points_text', productBrief.selling_points_text)
+    form.set('target_audience_text', productBrief.target_audience_text)
+    form.set('brand_tone', productBrief.brand_tone)
+    form.set('forbidden_words_text', productBrief.forbidden_words_text)
+    productImages.forEach((file) => form.append('product_images', file))
+    return request<CreativeRun>(`/projects/${projectId}/creative-runs`, {
       method: 'POST',
       body: form,
     })
   },
-  listCreativeRuns: (projectId: number) =>
-    request<CreativeRun[]>(`/projects/${projectId}/creative-runs`),
-  createCreativeRun: ({ projectId, campaignGoal }: CreateCreativeRunInput) =>
-    request<CreativeRun>(`/projects/${projectId}/creative-runs`, {
-      method: 'POST',
-      body: JSON.stringify({ campaign_goal: campaignGoal }),
-    }),
 }

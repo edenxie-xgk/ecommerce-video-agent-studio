@@ -16,17 +16,35 @@ class Settings(BaseSettings):
         default=f"sqlite:///{(BACKEND_ROOT / 'var' / 'app.sqlite3').as_posix()}",
         description="业务数据库连接地址；生产环境应配置为 PostgreSQL。",
     )
-    llm_base_url: str | None = Field(
+    text_llm_base_url: str | None = Field(
         default=None,
-        description="OpenAI-compatible API 根地址，例如 https://api.openai.com/v1。",
+        description="文本模型 OpenAI-compatible API 根地址，例如 https://api.openai.com/v1。",
     )
-    llm_api_key: str | None = Field(default=None, description="模型 Provider API 密钥。")
-    llm_model: str | None = Field(default=None, description="用于结构化创意生成的模型名称。")
-    llm_timeout_seconds: int = Field(
+    text_llm_api_key: str | None = Field(default=None, description="文本模型 Provider API 密钥。")
+    text_llm_model: str | None = Field(default=None, description="文本结构化生成模型名称。")
+    text_llm_timeout_seconds: int = Field(
         default=45,
         ge=5,
         le=180,
-        description="单次模型请求超时时间，单位秒。",
+        description="单次文本模型请求超时时间，单位秒。",
+    )
+    multimodal_llm_base_url: str | None = Field(
+        default=None,
+        description="多模态模型 OpenAI-compatible API 根地址，例如 https://api.openai.com/v1。",
+    )
+    multimodal_llm_api_key: str | None = Field(
+        default=None,
+        description="多模态模型 Provider API 密钥。",
+    )
+    multimodal_llm_model: str | None = Field(
+        default=None,
+        description="商品理解节点使用的多模态模型名称。",
+    )
+    multimodal_llm_timeout_seconds: int = Field(
+        default=45,
+        ge=5,
+        le=180,
+        description="单次多模态模型请求超时时间，单位秒。",
     )
     langgraph_checkpoint_path: str = Field(
         default=(BACKEND_ROOT / "var" / "creative_agent_checkpoints.sqlite3").as_posix(),

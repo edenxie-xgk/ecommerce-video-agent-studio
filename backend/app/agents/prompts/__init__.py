@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 # creative_script 节点使用的 Prompt 引用，格式固定为 `调用点/版本`。
+ANALYZE_PRODUCT_PROMPT_REF = "analyze_product/v1"
 GENERATE_CREATIVE_DRAFT_PROMPT_REF = "generate_creative_draft/v1"
 REVIEW_CREATIVE_CLAIMS_PROMPT_REF = "review_creative_claims/v1"
 
@@ -35,7 +36,15 @@ class PromptTemplate:
 
 
 PROMPT_REGISTRY: dict[str, PromptDefinition] = {
-    # 当前唯一模型调用：根据已确认商品事实生成三套创意方案。
+    # 商品理解节点：把用户资料整理成后续节点可引用的商品事实。
+    ANALYZE_PRODUCT_PROMPT_REF: PromptDefinition(
+        key="analyze_product",
+        version="v1",
+        description="product_understanding 节点调用 LLM 时使用，输出可追溯的商品理解。",
+        owner="agents",
+        file_name="analyze_product.v1.md",
+    ),
+    # 创意脚本节点：根据已确认商品事实生成三套创意方案。
     GENERATE_CREATIVE_DRAFT_PROMPT_REF: PromptDefinition(
         key="generate_creative_draft",
         version="v1",

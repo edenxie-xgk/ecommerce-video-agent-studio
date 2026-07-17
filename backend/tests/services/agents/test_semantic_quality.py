@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
 
 from app.agents.modeling.provider import ModelJsonResponse, ProviderTransientError
-from app.agents.planner import CreativePlanner
 from app.agents.nodes.creative_script import build_local_draft
+from app.agents.planner import CreativePlanner
 from app.application.creative_agent import (
     CreativeBriefInput,
     CreativeProjectInput,
@@ -64,7 +64,18 @@ class ReviewingProvider:
     def generate_json(self, **kwargs) -> ModelJsonResponse:
         self.calls += 1
         schema = kwargs["json_schema"]
-        if "assessments" in schema.get("properties", {}):
+        properties = schema.get("properties", {})
+        if "selected_selling_points" in properties:
+            return ModelJsonResponse(
+                payload={
+                    "inferred_category": "强调转化的消费品",
+                    "selected_selling_points": ["Lightweight", "sealed lid"],
+                    "selected_audience": ["Commuters"],
+                    "readiness_score": 100,
+                },
+                model_key="product-understanding",
+            )
+        if "assessments" in properties:
             if self.fail_review:
                 raise ProviderTransientError("semantic reviewer unavailable")
             return ModelJsonResponse(
@@ -81,6 +92,7 @@ def test_semantic_review_blocks_unsupported_claim_outside_regex_patterns(
     project_factory: Callable[..., CreativeProjectInput],
     run_input_factory: Callable[..., CreativeRunInput],
     complete_brief: CreativeBriefInput,
+    use_agent_provider,
 ) -> None:
     project = project_factory()
     claim = "采用专业实验标准，适合所有敏感人群"
@@ -98,10 +110,11 @@ def test_semantic_review_blocks_unsupported_claim_outside_regex_patterns(
             ]
         },
     )
+    use_agent_provider(provider)
 
-    result = CreativePlanner(provider=provider).run(run_input_factory(project=project))
+    result = CreativePlanner().run(run_input_factory(project=project))
 
-    assert provider.calls == 2
+    assert provider.calls == 3
     assert not result.bundle.evaluation.passed
     assert result.bundle.action == "resolve_quality_issues"
     assert any(
@@ -114,6 +127,7 @@ def test_server_rejects_supported_claim_with_unknown_evidence_key(
     project_factory: Callable[..., CreativeProjectInput],
     run_input_factory: Callable[..., CreativeRunInput],
     complete_brief: CreativeBriefInput,
+    use_agent_provider,
 ) -> None:
     project = project_factory()
     claim = "适合所有敏感人群"
@@ -131,8 +145,9 @@ def test_server_rejects_supported_claim_with_unknown_evidence_key(
             ]
         },
     )
+    use_agent_provider(provider)
 
-    result = CreativePlanner(provider=provider).run(run_input_factory(project=project))
+    result = CreativePlanner().run(run_input_factory(project=project))
 
     assert not result.bundle.evaluation.passed
     assert any(issue.code == "invalid_claim_evidence" for issue in result.bundle.evaluation.issues)
@@ -142,6 +157,7 @@ def test_server_rejects_expanded_claim_even_with_existing_evidence_key(
     project_factory: Callable[..., CreativeProjectInput],
     run_input_factory: Callable[..., CreativeRunInput],
     complete_brief: CreativeBriefInput,
+    use_agent_provider,
 ) -> None:
     project = project_factory()
     claim = "Lightweight and suitable for every medical condition"
@@ -159,8 +175,9 @@ def test_server_rejects_expanded_claim_even_with_existing_evidence_key(
             ]
         },
     )
+    use_agent_provider(provider)
 
-    result = CreativePlanner(provider=provider).run(run_input_factory(project=project))
+    result = CreativePlanner().run(run_input_factory(project=project))
 
     assert not result.bundle.evaluation.passed
     assert any(issue.code == "invalid_claim_evidence" for issue in result.bundle.evaluation.issues)
@@ -170,6 +187,7 @@ def test_external_draft_fails_closed_when_semantic_review_is_unavailable(
     project_factory: Callable[..., CreativeProjectInput],
     run_input_factory: Callable[..., CreativeRunInput],
     complete_brief: CreativeBriefInput,
+    use_agent_provider,
 ) -> None:
     project = project_factory()
     provider = ReviewingProvider(
@@ -187,10 +205,11 @@ def test_external_draft_fails_closed_when_semantic_review_is_unavailable(
         },
         fail_review=True,
     )
+    use_agent_provider(provider)
 
-    result = CreativePlanner(provider=provider).run(run_input_factory(project=project))
+    result = CreativePlanner().run(run_input_factory(project=project))
 
-    assert provider.calls == 2
+    assert provider.calls == 3
     assert not result.bundle.evaluation.passed
     assert result.bundle.action == "resolve_quality_issues"
     assert any(

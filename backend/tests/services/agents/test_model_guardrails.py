@@ -1,9 +1,9 @@
-from collections.abc import Callable
+﻿from collections.abc import Callable
 from copy import deepcopy
 
-from app.agents.planner import CreativePlanner
 from app.agents.modeling.provider import ModelJsonResponse
 from app.agents.nodes.creative_script import build_local_draft
+from app.agents.planner import CreativePlanner
 from app.application.creative_agent import (
     CreativeBriefInput,
     CreativeProjectInput,
@@ -52,12 +52,23 @@ class AnalysisOverridingProvider:
     def __init__(self, payload: dict[str, object]) -> None:
         self.payload = payload
         self.requested_schema: dict[str, object] | None = None
+        self.creative_schema: dict[str, object] | None = None
         self.calls = 0
 
     def generate_json(self, **kwargs) -> ModelJsonResponse:
         self.calls += 1
         self.requested_schema = kwargs["json_schema"]
         properties = self.requested_schema.get("properties", {})
+        if "selected_selling_points" in properties:
+            return ModelJsonResponse(
+                payload={
+                    "inferred_category": "强调转化的消费品",
+                    "selected_selling_points": ["Lightweight", "sealed lid"],
+                    "selected_audience": ["Commuters"],
+                    "readiness_score": 100,
+                },
+                model_key="analysis-overrider",
+            )
         if "assessments" in properties:
             return ModelJsonResponse(
                 payload={
@@ -73,6 +84,7 @@ class AnalysisOverridingProvider:
                 },
                 model_key="analysis-overrider",
             )
+        self.creative_schema = self.requested_schema
         return ModelJsonResponse(
             payload=deepcopy(self.payload),
             model_key="analysis-overrider",
@@ -81,7 +93,10 @@ class AnalysisOverridingProvider:
 
 class InventedSellingPointProvider(AnalysisOverridingProvider):
     def generate_json(self, **kwargs) -> ModelJsonResponse:
+        properties = kwargs["json_schema"].get("properties", {})
         response = super().generate_json(**kwargs)
+        if "concepts" not in properties:
+            return response
         concepts = response.payload["concepts"]
         assert isinstance(concepts, list)
         for concept in concepts:
@@ -90,18 +105,20 @@ class InventedSellingPointProvider(AnalysisOverridingProvider):
         return response
 
 
-def test_provider_cannot_override_deterministic_product_analysis(
+def test_creative_payload_cannot_override_authoritative_product_analysis(
     project_factory: Callable[..., CreativeProjectInput],
     run_input_factory: Callable[..., CreativeRunInput],
     complete_brief: CreativeBriefInput,
+    use_agent_provider,
 ) -> None:
     project = project_factory()
     provider = AnalysisOverridingProvider(_analysis_overriding_payload(project, complete_brief))
+    use_agent_provider(provider)
 
-    result = CreativePlanner(provider=provider).run(run_input_factory(project=project))
+    result = CreativePlanner().run(run_input_factory(project=project))
 
-    assert provider.requested_schema is not None
-    assert "analysis" not in provider.requested_schema["properties"]
+    assert provider.creative_schema is not None
+    assert "analysis" not in provider.creative_schema["properties"]
     assert result.provider_key == "openai_compatible"
     assert result.model_key == "analysis-overrider"
     assert result.bundle.analysis.product_summary == "Portable thermal cup"
@@ -113,14 +130,16 @@ def test_unverified_model_selling_point_retries_then_falls_back_locally(
     project_factory: Callable[..., CreativeProjectInput],
     run_input_factory: Callable[..., CreativeRunInput],
     complete_brief: CreativeBriefInput,
+    use_agent_provider,
 ) -> None:
     project = project_factory()
     provider = InventedSellingPointProvider(_analysis_overriding_payload(project, complete_brief))
+    use_agent_provider(provider)
 
-    result = CreativePlanner(provider=provider).run(run_input_factory(project=project))
+    result = CreativePlanner().run(run_input_factory(project=project))
 
     assert result.provider_key == "local"
-    assert provider.calls == 2
+    assert provider.calls == 3
     assert result.bundle.action == "review_plan"
     assert {concept.primary_selling_point for concept in result.bundle.concepts}.issubset(
         set(result.bundle.analysis.inferred_selling_points)

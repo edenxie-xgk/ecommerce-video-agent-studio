@@ -15,7 +15,7 @@ GenerationMode = Literal[
 
 
 class ProductAnalysis(BaseModel):
-    """保存 Agent 对商品事实、约束和资料完整度的判断。"""
+    """保存商品理解阶段通过模型候选和服务端校验得到的商品事实。"""
 
     product_summary: str = Field(description="Agent 使用的标准商品名称或摘要。")
     inferred_category: str = Field(description="根据平台和资料推断的商品表达类别。")
@@ -28,6 +28,14 @@ class ProductAnalysis(BaseModel):
         description="Agent 采用的目标人群判断。",
     )
     visual_evidence_count: int = Field(ge=0, description="已验证且可用于镜头规划的图片引用数量。")
+    visual_observations: list[str] = Field(
+        default_factory=list,
+        description="多模态模型从商品图片中看到的可见事实，不包含图片无法证明的功效或参数。",
+    )
+    visual_uncertainties: list[str] = Field(
+        default_factory=list,
+        description="图片无法确认、需要用户补充或不能作为文案依据的信息。",
+    )
     constraints: list[str] = Field(
         default_factory=list,
         description="用户声明的禁用表达和内容约束。",
@@ -131,4 +139,4 @@ class CreativePlanContent(BaseModel):
 class CreativeDraft(CreativePlanContent):
     """保存服务端商品分析与模型或本地创意组合后的完整草案。"""
 
-    analysis: ProductAnalysis = Field(description="服务端确定性规则生成的商品分析。")
+    analysis: ProductAnalysis = Field(description="商品理解阶段最终采用的商品分析。")

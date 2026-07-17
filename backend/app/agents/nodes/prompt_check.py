@@ -7,14 +7,14 @@ from functools import partial
 import re
 from typing import Literal, TypeAlias
 
-from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from app.agents.modeling.contracts import SemanticClaimReview
 from app.agents.modeling.provider import ModelGenerationError
 from app.agents.modeling.review import review_creative_claims
+from app.agents.models import config_model
 from app.agents.nodes import REVIEW_COST_GATE
-from app.agents.state import AgentState, PlannerContext
+from app.agents.state import AgentState
 from app.application.creative_agent import (
     CreativeConcept,
     CreativeDraft,
@@ -93,43 +93,26 @@ REVIEWABLE_SHOT_TEXT_FIELDS: tuple[ShotTextField, ...] = (
 )
 
 
-def prompt_check_node(
-    state: AgentState,
-    runtime: Runtime[PlannerContext],
-) -> Command:
+def prompt_check_node(state: AgentState) -> Command:
     """评估三套方案，必要时修订一次，并把质量结论写回 checkpoint。"""
 
     run_input = state["run_input"]
     project = run_input.project
     brief = run_input.brief
-    forbidden_words = [
-        part.strip(" -。.!！?？")
-        for part in re.split(r"[\n,，、;；]+", brief.forbidden_words_text if brief else "")
-        if part.strip(" -。.!！?？")
-    ]
+    forbidden_words = brief.forbidden_words() if brief else []
     confirmed_fact_registry: dict[str, str] = {}
     if brief:
-        selling_point_facts = [
-            part.strip(" -。.!！?？")
-            for part in re.split(r"[\n,，、;；]+", brief.selling_points_text)
-            if part.strip(" -。.!！?？")
-        ]
-        audience_facts = [
-            part.strip(" -。.!！?？")
-            for part in re.split(r"[\n,，、;；]+", brief.target_audience_text)
-            if part.strip(" -。.!！?？")
-        ]
         confirmed_fact_registry = {"product_name": brief.product_name.strip()}
         confirmed_fact_registry.update(
             {
                 f"selling_point:{index}": value
-                for index, value in enumerate(selling_point_facts)
+                for index, value in enumerate(brief.selling_points())
             }
         )
         confirmed_fact_registry.update(
             {
                 f"target_audience:{index}": value
-                for index, value in enumerate(audience_facts)
+                for index, value in enumerate(brief.target_audiences())
             }
         )
     confirmed_facts = list(confirmed_fact_registry.values())
@@ -165,7 +148,7 @@ def prompt_check_node(
         else:
             try:
                 review = review_creative_claims(
-                    provider=runtime.context.provider,
+                    provider=config_model.prompt_check_model(),
                     draft=draft,
                     confirmed_facts=confirmed_fact_registry,
                 )
@@ -562,3 +545,5 @@ def remove_risky_claims(
             continue
         result = result.replace(forbidden_word, "")
     return result.strip()
+
+

@@ -1,82 +1,138 @@
-"""实现 product_understanding 节点：生成服务端权威商品分析。"""
+"""实现 product_understanding 节点：生成可追溯的商品理解。"""
 
 from __future__ import annotations
 
-import re
+import base64
+from pathlib import Path
 
+from langgraph.errors import NodeError
 from langgraph.types import Command
 
+from app.agents.modeling.contracts import GeneratedProductUnderstanding
+from app.agents.modeling.generation import (
+    build_authoritative_analysis,
+    build_input_based_analysis,
+)
+from app.agents.modeling.provider import ModelGenerationError, ModelImageInput
+from app.agents.models import config_model
 from app.agents.nodes import CREATIVE_SCRIPT
+from app.agents.prompts import ANALYZE_PRODUCT_PROMPT_REF, load_prompt_template
 from app.agents.state import AgentState
-from app.application.creative_agent import ProductAnalysis
+from app.application.creative_agent import CreativeAssetInput
+from app.core.config import BACKEND_ROOT, get_settings
 
 
 def product_understanding_node(state: AgentState) -> Command:
-    """生成商品理解结果。"""
+    """用模型理解商品资料，并把通过服务端校验的结果写入状态。"""
 
     run_input = state["run_input"]
-    project = run_input.project
+    provider = config_model.product_understanding_model()
+    if not provider.configured:
+        return Command(
+            update={
+                "analysis": build_input_based_analysis(run_input),
+                "product_understanding_provider_key": "local",
+                "product_understanding_model_key": None,
+            },
+            goto=CREATIVE_SCRIPT,
+        )
+
     brief = run_input.brief
-    assets = run_input.assets
-    product_name = (brief.product_name if brief else "").strip()
-    # 用户输入的卖点作为模型生成的卖点白名单。
-    selling_points = [
-        part.strip(" -。.!！?？")
-        for part in re.split(r"[\n,，、;；]+", brief.selling_points_text if brief else "")
-        if part.strip(" -。.!！?？")
+    if brief is None:
+        raise ValueError("商品资料缺失，不能执行商品理解节点。")
+
+    image_inputs = build_product_image_inputs(run_input.assets)
+    product_assets = [
+        {
+            "asset_id": asset.id,
+            "storage_key": asset.storage_key,
+            "mime_type": asset.mime_type,
+            "size_bytes": asset.size_bytes,
+            "metadata": asset.asset_metadata,
+            "visual_input_included": any(
+                image.label == f"asset_id={asset.id}; storage_key={asset.storage_key}"
+                for image in image_inputs
+            ),
+        }
+        for asset in run_input.assets
+        if asset.asset_type == "product_image"
     ]
-    audience = [
-        part.strip(" -。.!！?？")
-        for part in re.split(r"[\n,，、;；]+", brief.target_audience_text if brief else "")
-        if part.strip(" -。.!！?？")
-    ]
-    constraints = [
-        part.strip(" -。.!！?？")
-        for part in re.split(r"[\n,，、;；]+", brief.forbidden_words_text if brief else "")
-        if part.strip(" -。.!！?？")
-    ]
-    missing: list[str] = []
-
-    # 商品名称和至少一张已验证图片引用是当前版模生成可审核方案的硬门槛。
-    if not product_name:
-        missing.append("product_name")
-    if not assets:
-        missing.append("product_images")
-
-    # 就绪度用于解释资料质量，missing_information 保存硬门槛缺失项。
-    readiness_score = 100
-    if "product_name" in missing:
-        readiness_score -= 45
-    if "product_images" in missing:
-        readiness_score -= 40
-    if not selling_points:
-        readiness_score -= 10
-    if not audience:
-        readiness_score -= 5
-
-    platform_category = (
-        "强调转化的消费品" if project.target_platform == "douyin" else "适合种草表达的消费品"
+    prompt_template = load_prompt_template(ANALYZE_PRODUCT_PROMPT_REF)
+    response = provider.generate_json(
+        system_prompt=prompt_template.system_prompt,
+        input_payload={
+            "product_name": brief.product_name.strip(),
+            "selling_points": brief.selling_points(),
+            "target_audience": brief.target_audiences(),
+            "brand_tone": brief.brand_tone.strip(),
+            "forbidden_expressions": brief.forbidden_words(),
+            "target_platform": run_input.project.target_platform,
+            "campaign_goal": run_input.campaign_goal,
+            "duration_seconds": run_input.project.duration_seconds,
+            "product_assets": product_assets,
+            "visual_input_count": len(image_inputs),
+        },
+        json_schema=GeneratedProductUnderstanding.model_json_schema(),
+        image_inputs=image_inputs,
     )
-    # product_summary 是后续生成与质量检查引用商品的标准名称。
-    summary = product_name or "待确认商品"
-    default_audience = (
-        "希望先看真实体验和细节再做决定的用户"
-        if project.target_platform == "xiaohongshu"
-        else "希望快速判断商品价值的短视频用户"
+    analysis = build_authoritative_analysis(
+        payload=response.payload,
+        run_input=run_input,
+        image_input_count=len(image_inputs),
     )
-
-    analysis = ProductAnalysis(
-        product_summary=summary,
-        inferred_category=platform_category,
-        inferred_selling_points=selling_points or ["外观与使用价值需要结合商品图进一步表达"],
-        inferred_audience=audience or [default_audience],
-        visual_evidence_count=len(assets),
-        constraints=constraints,
-        missing_information=missing,
-        readiness_score=max(readiness_score, 0),
-    )
-    # 商品分析写入状态后，交给 creative_script 节点制定创意草案。
     return Command(
-        update={"analysis": analysis},
+        update={
+            "analysis": analysis,
+            "product_understanding_provider_key": "openai_compatible",
+            "product_understanding_model_key": response.model_key,
+        },
         goto=CREATIVE_SCRIPT,
     )
+
+
+def build_product_image_inputs(assets: list[CreativeAssetInput]) -> list[ModelImageInput]:
+    """把已上传商品图读取为多模态模型可接收的图片输入。"""
+
+    settings = get_settings()
+    storage_root = Path(settings.asset_storage_path).expanduser()
+    if not storage_root.is_absolute():
+        storage_root = BACKEND_ROOT / storage_root
+    storage_root = storage_root.resolve()
+
+    image_inputs: list[ModelImageInput] = []
+    for asset in assets:
+        if asset.asset_type != "product_image":
+            continue
+        image_path = (storage_root / asset.storage_key).resolve()
+        try:
+            image_path.relative_to(storage_root)
+            image_bytes = image_path.read_bytes()
+        except (FileNotFoundError, OSError, ValueError):
+            continue
+        image_inputs.append(
+            ModelImageInput(
+                label=f"asset_id={asset.id}; storage_key={asset.storage_key}",
+                mime_type=asset.mime_type,
+                base64_data=base64.b64encode(image_bytes).decode("ascii"),
+            )
+        )
+    return image_inputs
+
+
+def product_understanding_error_handler(state: AgentState, error: NodeError) -> Command:
+    """模型理解失败时，回落为只使用用户已确认资料的商品理解。"""
+
+    if not isinstance(error.error, ModelGenerationError):
+        raise error.error
+    return Command(
+        update={
+            "analysis": build_input_based_analysis(state["run_input"]),
+            "product_understanding_provider_key": "local",
+            "product_understanding_model_key": None,
+        },
+        goto=CREATIVE_SCRIPT,
+    )
+
+
+
+

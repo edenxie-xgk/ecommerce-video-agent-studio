@@ -1,16 +1,16 @@
-from collections.abc import Callable
+﻿from collections.abc import Callable
 
 import pytest
 
-from app.agents.planner import CreativePlanner
 from app.agents.modeling.provider import OpenAICompatibleProvider
+from app.agents.models import config_model
+from app.agents.planner import CreativePlanner
 from app.application.creative_agent import (
     CreativeAssetInput,
     CreativeBriefInput,
     CreativeProjectInput,
     CreativeRunInput,
 )
-from app.core.config import Settings
 
 
 @pytest.fixture
@@ -30,18 +30,34 @@ def recording_session():
     return RecordingSession()
 
 
+@pytest.fixture(autouse=True)
+def use_local_agent_models(monkeypatch):
+    provider = OpenAICompatibleProvider(
+        base_url=None,
+        api_key=None,
+        model_key=None,
+        timeout_seconds=45,
+    )
+    monkeypatch.setattr(config_model, "product_understanding_model", lambda: provider)
+    monkeypatch.setattr(config_model, "creative_script_model", lambda: provider)
+    monkeypatch.setattr(config_model, "prompt_check_model", lambda: provider)
+    return provider
+
+
+@pytest.fixture
+def use_agent_provider(monkeypatch):
+    def apply(provider):
+        monkeypatch.setattr(config_model, "product_understanding_model", lambda: provider)
+        monkeypatch.setattr(config_model, "creative_script_model", lambda: provider)
+        monkeypatch.setattr(config_model, "prompt_check_model", lambda: provider)
+        return provider
+
+    return apply
+
+
 @pytest.fixture
 def local_planner() -> CreativePlanner:
-    return CreativePlanner(
-        OpenAICompatibleProvider(
-            Settings(
-                database_url="sqlite://",
-                llm_base_url=None,
-                llm_api_key=None,
-                llm_model=None,
-            )
-        )
-    )
+    return CreativePlanner()
 
 
 @pytest.fixture

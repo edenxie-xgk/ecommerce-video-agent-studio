@@ -15,20 +15,19 @@ import {
   FileImage,
   ImagePlus,
   Layers3,
-  Save,
   ShieldCheck,
   Sparkles,
   Target,
+  X,
 } from '@lucide/vue'
 import type { ProductBrief, Project, ProjectAsset } from '../api/client'
 
 const props = defineProps<{
   project: Project | null
   assets: ProjectAsset[]
+  pendingImages: File[]
   error: string
-  saving: boolean
   planning: boolean
-  uploading: boolean
   busy: boolean
   brief: ProductBrief
   campaignGoal: string
@@ -36,9 +35,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:campaignGoal': [value: string]
-  save: []
   generate: []
-  upload: [options: UploadCustomRequestOptions]
+  'remove-pending-image': [file: File]
+  'select-image': [options: UploadCustomRequestOptions]
 }>()
 
 const campaignGoalModel = computed({
@@ -51,6 +50,8 @@ const campaignGoalModel = computed({
 const productAssets = computed(() =>
   props.assets.filter((asset) => asset.type === 'product_image'),
 )
+
+const totalProductImageCount = computed(() => productAssets.value.length + props.pendingImages.length)
 
 const platformLabel = computed(() =>
   props.project?.target_platform === 'xiaohongshu' ? '小红书' : '抖音',
@@ -146,25 +147,45 @@ const platformLabel = computed(() =>
             <strong>商品图片素材</strong>
             <span>至少一张主图。支持 JPEG、PNG、WebP，单张不超过 10 MB。</span>
           </div>
-          <n-tag size="small" :type="productAssets.length ? 'success' : 'warning'">
-            {{ productAssets.length }}/5
+          <n-tag size="small" :type="totalProductImageCount ? 'success' : 'warning'">
+            {{ totalProductImageCount }}/5
           </n-tag>
         </div>
 
         <n-upload
           accept="image/*"
+          multiple
           :show-file-list="false"
-          :custom-request="(options) => emit('upload', options)"
-          :disabled="busy || productAssets.length >= 5"
+          :custom-request="(options) => emit('select-image', options)"
+          :disabled="busy || totalProductImageCount >= 5"
         >
-          <button class="upload-zone" type="button" :disabled="busy || productAssets.length >= 5">
+          <button class="upload-zone" type="button" :disabled="busy || totalProductImageCount >= 5">
             <FileImage :size="22" />
             <span>
-              <strong>{{ uploading ? '正在上传商品图片' : '上传商品图片' }}</strong>
-              <small>文件通过完整解码校验后才会加入项目</small>
+              <strong>选择商品图片</strong>
+              <small>点击生成方案时与商品资料一起提交</small>
             </span>
           </button>
         </n-upload>
+
+        <div v-if="pendingImages.length" class="asset-list">
+          <span
+            v-for="file in pendingImages"
+            :key="`${file.name}-${file.size}-${file.lastModified}`"
+            class="asset-chip"
+          >
+            <FileImage :size="14" />
+            待提交：{{ file.name }}
+            <button
+              class="asset-chip-remove"
+              type="button"
+              :disabled="busy"
+              @click.stop="emit('remove-pending-image', file)"
+            >
+              <X :size="12" />
+            </button>
+          </span>
+        </div>
 
         <div v-if="productAssets.length" class="asset-list">
           <span v-for="asset in productAssets" :key="asset.id" class="asset-chip">
@@ -179,10 +200,6 @@ const platformLabel = computed(() =>
           <ShieldCheck :size="17" />
           真实视频生成仍需人工确认，Agent 只负责制定和评估方案。
         </div>
-        <n-button :loading="saving" :disabled="busy" @click="emit('save')">
-          <template #icon><n-icon :component="Save" /></template>
-          保存事实
-        </n-button>
         <n-button
           type="primary"
           size="large"

@@ -99,7 +99,13 @@ class CreativeRunService:
         """加载业务数据、创建工作流运行并执行当前自动节点段。"""
 
         project, brief, assets = self._load_project_context(project_id)
-        self._validate_ready_for_agent(brief=brief, assets=assets)
+        run_input = self._to_run_input(
+            project=project,
+            brief=brief,
+            assets=assets,
+            campaign_goal=campaign_goal,
+        )
+        self._validate_ready_for_agent(run_input)
         execution_id = uuid4().hex
         input_payload = {
             "campaign_goal": campaign_goal,
@@ -122,12 +128,7 @@ class CreativeRunService:
 
         try:
             result = self._agent.run(
-                self._to_run_input(
-                    project=project,
-                    brief=brief,
-                    assets=assets,
-                    campaign_goal=campaign_goal,
-                ),
+                run_input,
                 execution_id=execution_id,
             )
             return self._apply_result(run, project, result)
@@ -203,19 +204,20 @@ class CreativeRunService:
         return project, brief, assets
 
     @staticmethod
-    def _validate_ready_for_agent(
-        *,
-        brief: ProductBrief | None,
-        assets: list[ProjectAsset],
-    ) -> None:
+    def _validate_ready_for_agent(run_input: CreativeRunInput) -> None:
         """在创建 CreativeRun 前校验当前版本的硬门槛输入。"""
 
-        missing: list[str] = []
-        product_name = (brief.product_name if brief else "").strip()
-        if not product_name:
-            missing.append("商品名称")
-        if not assets:
-            missing.append("至少一张已验证商品图片")
+        field_labels = {
+            "product_name": "商品名称",
+            "selling_points": "商品卖点",
+            "target_audience": "目标人群",
+            "product_images": "至少一张已验证商品图片",
+        }
+        missing = [
+            field_labels[field]
+            for field in run_input.missing_required_agent_inputs()
+            if field in field_labels
+        ]
         if missing:
             raise ValueError("资料未达到启动硬门槛，Agent 未创建运行。请先补齐：" + "、".join(missing))
 
@@ -297,8 +299,8 @@ class CreativeRunService:
         self._record_agent_node(
             run=run,
             node_name=PRODUCT_UNDERSTANDING_NODE,
-            provider_key="local",
-            model_key=None,
+            provider_key=result.product_understanding_provider_key,
+            model_key=result.product_understanding_model_key,
             input_payload=CreativeRunService._run_input_metadata(run),
             output_payload=bundle.analysis.model_dump(mode="json"),
         )
@@ -361,6 +363,8 @@ class CreativeRunService:
             "confidence": bundle.confidence,
             "provider_key": result.provider_key,
             "model_key": result.model_key,
+            "product_understanding_provider_key": result.product_understanding_provider_key,
+            "product_understanding_model_key": result.product_understanding_model_key,
             "revision_count": bundle.revision_count,
             "decision_payload": decision_payload,
         }
@@ -389,6 +393,8 @@ class CreativeRunService:
             "confidence",
             "decision_payload",
             "model_key",
+            "product_understanding_model_key",
+            "product_understanding_provider_key",
             "provider_key",
             "public_status",
             "revision_count",

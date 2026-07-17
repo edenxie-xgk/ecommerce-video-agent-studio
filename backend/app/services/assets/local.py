@@ -102,6 +102,17 @@ class LocalAssetService:
             self._enforce_project_limit(draft.project_id)
             return self._persist_validated_image(draft, source)
 
+    def delete_uploaded_assets(self, assets: list[ProjectAsset]) -> None:
+        """删除本次请求已经保存的商品图片，保留用户重新提交的干净入口。"""
+
+        if not assets:
+            return
+        for asset in assets:
+            with suppress(FileNotFoundError):
+                (self._storage_root / asset.storage_key).unlink()
+            self._session.delete(asset)
+        self._session.commit()
+
     def _validate_declared_type(self, draft: UploadedAssetDraft) -> None:
         """在读取文件前拒绝未知业务类型和非图片 MIME。"""
 

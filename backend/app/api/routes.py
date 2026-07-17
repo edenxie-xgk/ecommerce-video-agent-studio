@@ -4,7 +4,6 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.api.deps import CreativeRunServiceDep, SessionDep
 from app.api.schemas import (
-    CreativePlanRequest,
     CreativeRunResponse,
     ProductBriefPayload,
     ProductBriefResponse,
@@ -59,21 +58,6 @@ def create_project(
     return _project_to_response(service, project)
 
 
-@router.put("/projects/{project_id}/product-brief")
-def update_product_brief(
-    project_id: int,
-    payload: ProductBriefPayload,
-    session: SessionDep,
-) -> ProductBriefResponse:
-    service = ProjectService(session)
-    _get_project_or_404(service, project_id)
-    brief = service.upsert_product_brief(
-        project_id,
-        _to_product_brief_input(payload),
-    )
-    return _brief_to_response(brief)
-
-
 @router.get("/projects/{project_id}/assets")
 def list_assets(
     project_id: int,
@@ -84,55 +68,84 @@ def list_assets(
     return [_asset_to_response(asset) for asset in service.list_assets(project_id)]
 
 
-@router.post("/projects/{project_id}/assets")
-def upload_asset(
-    project_id: int,
-    session: SessionDep,
-    asset_type: str = Form(default="product_image"),
-    file: UploadFile = File(...),
-) -> ProjectAssetResponse:
-    project_service = ProjectService(session)
-    _get_project_or_404(project_service, project_id)
-    try:
-        asset = LocalAssetService(session).create_uploaded_asset(
-            UploadedAssetDraft(
-                project_id=project_id,
-                asset_type=asset_type,
-                filename=file.filename,
-                mime_type=file.content_type,
-            ),
-            file.file,
-        )
-    except UnsupportedAssetTypeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except UnsupportedImageTypeError as exc:
-        raise HTTPException(status_code=415, detail=str(exc)) from exc
-    except AssetTooLargeError as exc:
-        raise HTTPException(status_code=413, detail=str(exc)) from exc
-    except AssetCountLimitError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except InvalidImageError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    finally:
-        file.file.close()
-    return _asset_to_response(asset)
-
-
 @router.post("/projects/{project_id}/creative-runs")
 def create_creative_run(
     project_id: int,
-    payload: CreativePlanRequest,
+    session: SessionDep,
     service: CreativeRunServiceDep,
+    campaign_goal: str = Form(
+        default="让目标用户快速理解商品价值，并愿意进一步查看商品详情",
+        max_length=500,
+    ),
+    product_name: str | None = Form(default=None),
+    selling_points_text: str = Form(default=""),
+    target_audience_text: str = Form(default=""),
+    brand_tone: str = Form(default=""),
+    forbidden_words_text: str = Form(default=""),
+    product_images: list[UploadFile] = File(...),
 ) -> CreativeRunResponse:
+    project_service = ProjectService(session)
+    _get_project_or_404(project_service, project_id)
+
+    if not product_images:
+        raise HTTPException(status_code=400, detail="请至少上传一张商品图片。")
+
+    asset_service = LocalAssetService(session)
+    created_assets: list[ProjectAsset] = []
     try:
+        project_service.upsert_product_brief(
+            project_id,
+            ProductBriefInput(
+                product_name=product_name,
+                selling_points_text=selling_points_text,
+                target_audience_text=target_audience_text,
+                brand_tone=brand_tone,
+                forbidden_words_text=forbidden_words_text,
+            ),
+        )
+        for file in product_images:
+            created_assets.append(
+                asset_service.create_uploaded_asset(
+                    UploadedAssetDraft(
+                        project_id=project_id,
+                        asset_type="product_image",
+                        filename=file.filename,
+                        mime_type=file.content_type,
+                    ),
+                    file.file,
+                )
+            )
         run = service.generate(
             project_id=project_id,
-            campaign_goal=payload.campaign_goal,
+            campaign_goal=campaign_goal,
         )
+    except UnsupportedAssetTypeError as exc:
+        asset_service.delete_uploaded_assets(created_assets)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except UnsupportedImageTypeError as exc:
+        asset_service.delete_uploaded_assets(created_assets)
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except AssetTooLargeError as exc:
+        asset_service.delete_uploaded_assets(created_assets)
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    except AssetCountLimitError as exc:
+        asset_service.delete_uploaded_assets(created_assets)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InvalidImageError as exc:
+        asset_service.delete_uploaded_assets(created_assets)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except KeyError as exc:
+        asset_service.delete_uploaded_assets(created_assets)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
+        asset_service.delete_uploaded_assets(created_assets)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        asset_service.delete_uploaded_assets(created_assets)
+        raise
+    finally:
+        for file in product_images:
+            file.file.close()
     return _creative_run_to_response(run)
 
 

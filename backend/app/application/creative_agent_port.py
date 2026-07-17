@@ -3,11 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Protocol
 
 from pydantic import BaseModel, Field
 
 from app.application.creative_decision import CreativeDecisionBundle
+
+
+PHRASE_SEPARATOR_PATTERN = re.compile(r"[\n,，、;；]+")
+PHRASE_TRIM_CHARS = " -。.!！?？"
+
+
+def split_phrase_text(value: str) -> list[str]:
+    """把用户在 textarea 中输入的中英文逗号、顿号、分号和换行统一拆成业务短语。"""
+
+    return [
+        part.strip(PHRASE_TRIM_CHARS)
+        for part in PHRASE_SEPARATOR_PATTERN.split(value)
+        if part.strip(PHRASE_TRIM_CHARS)
+    ]
 
 
 class CreativeProjectInput(BaseModel):
@@ -32,6 +47,21 @@ class CreativeBriefInput(BaseModel):
     target_audience_text: str = Field(description="用户确认的目标人群文本。")
     brand_tone: str = Field(description="品牌语气或表达风格。")
     forbidden_words_text: str = Field(description="需要规避的风险表达。")
+
+    def selling_points(self) -> list[str]:
+        """返回可被 Agent 直接引用的已确认商品卖点列表。"""
+
+        return split_phrase_text(self.selling_points_text)
+
+    def target_audiences(self) -> list[str]:
+        """返回可被 Agent 直接引用的已确认目标人群列表。"""
+
+        return split_phrase_text(self.target_audience_text)
+
+    def forbidden_words(self) -> list[str]:
+        """返回质量门禁和模型 Prompt 都必须避开的风险表达。"""
+
+        return split_phrase_text(self.forbidden_words_text)
 
 
 class CreativeAssetInput(BaseModel):
@@ -63,6 +93,23 @@ class CreativeRunInput(BaseModel):
     )
     campaign_goal: str = Field(description="本次创意决策需要达成的营销目标。")
 
+    def missing_required_agent_inputs(self) -> list[str]:
+        """列出启动当前自动创意段前必须补齐的资料字段。"""
+
+        missing: list[str] = []
+        if self.brief is None:
+            missing.extend(["product_name", "selling_points", "target_audience"])
+        else:
+            if not self.brief.product_name.strip():
+                missing.append("product_name")
+            if not self.brief.selling_points():
+                missing.append("selling_points")
+            if not self.brief.target_audiences():
+                missing.append("target_audience")
+        if not any(asset.asset_type == "product_image" for asset in self.assets):
+            missing.append("product_images")
+        return missing
+
 
 @dataclass(frozen=True)
 class CreativeAgentResult:
@@ -71,6 +118,8 @@ class CreativeAgentResult:
     bundle: CreativeDecisionBundle
     provider_key: str
     model_key: str | None
+    product_understanding_provider_key: str = "local"
+    product_understanding_model_key: str | None = None
     execution_id: str | None = None
 
 
