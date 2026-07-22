@@ -36,6 +36,10 @@ class ProductAnalysis(BaseModel):
         default_factory=list,
         description="图片无法确认、需要用户补充或不能作为文案依据的信息。",
     )
+    material_conflicts: list[str] = Field(
+        default_factory=list,
+        description="图片可见事实与用户商品资料直接冲突、会阻断继续生成的问题。",
+    )
     constraints: list[str] = Field(
         default_factory=list,
         description="用户声明的禁用表达和内容约束。",
@@ -140,3 +144,123 @@ class CreativeDraft(CreativePlanContent):
     """保存服务端商品分析与模型或本地创意组合后的完整草案。"""
 
     analysis: ProductAnalysis = Field(description="商品理解阶段最终采用的商品分析。")
+
+
+class StoryboardShotPrompt(BaseModel):
+    """保存单个镜头交给视频生成模型的执行 Prompt。"""
+
+    order: int = Field(ge=1, le=3, description="镜头在方案中的顺序。")
+    duration_seconds: int = Field(ge=1, le=15, description="镜头生成时长，单位秒。")
+    generation_mode: GenerationMode = Field(description="该镜头推荐使用的视频生成方式。")
+    image_reference: str | None = Field(
+        default=None,
+        description="该镜头优先引用的商品图片素材标识。",
+    )
+    source_purpose: str = Field(
+        min_length=1,
+        max_length=500,
+        description="该镜头来自脚本草案的叙事目的。",
+    )
+    positive_prompt: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="视频生成模型应执行的正向画面指令。",
+    )
+    negative_prompt: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="视频生成模型必须规避的画面、文案和事实风险。",
+    )
+    caption: str = Field(
+        min_length=1,
+        max_length=500,
+        description="该镜头建议使用的字幕或口播文本。",
+    )
+
+
+class StoryboardConceptPrompt(BaseModel):
+    """保存一套创意方向下的完整三镜头生成 Prompt。"""
+
+    concept_key: str = Field(
+        min_length=1,
+        max_length=64,
+        description="对应创意方案的稳定标识。",
+    )
+    title: str = Field(min_length=1, max_length=120, description="对应创意方案标题。")
+    primary_selling_point: str = Field(
+        min_length=1,
+        max_length=500,
+        description="该分镜 Prompt 主打的已确认卖点。",
+    )
+    target_audience: str = Field(
+        min_length=1,
+        max_length=500,
+        description="该分镜 Prompt 面向的目标人群。",
+    )
+    shot_prompts: list[StoryboardShotPrompt] = Field(
+        min_length=3,
+        max_length=3,
+        description="该方案的三个视频生成镜头 Prompt。",
+    )
+
+    @model_validator(mode="after")
+    def validate_shot_order(self) -> Self:
+        """保证每套分镜 Prompt 的镜头顺序固定为 1、2、3。"""
+
+        if [shot.order for shot in self.shot_prompts] != [1, 2, 3]:
+            raise ValueError(f"分镜 Prompt {self.concept_key} 的镜头顺序必须依次为 1、2、3。")
+        return self
+
+
+class StoryboardPromptBundle(BaseModel):
+    """保存 storyboard_prompt 节点生成的视频执行 Prompt 集合。"""
+
+    product_summary: str = Field(description="本组 Prompt 采用的标准商品名称或摘要。")
+    target_platform: str = Field(description="本组 Prompt 面向的内容平台。")
+    aspect_ratio: str = Field(description="目标视频画面比例。")
+    duration_seconds: int = Field(description="每套方案的目标视频总时长，单位秒。")
+    product_asset_refs: list[str] = Field(
+        default_factory=list,
+        description="可供视频生成模型引用的商品图片素材标识列表。",
+    )
+    global_negative_prompt: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="全部镜头共同遵守的负向生成约束。",
+    )
+    concepts: list[StoryboardConceptPrompt] = Field(
+        min_length=3,
+        max_length=3,
+        description="三套创意方向对应的视频生成 Prompt。",
+    )
+
+    @model_validator(mode="after")
+    def validate_storyboard_structure(self) -> Self:
+        """校验分镜 Prompt 方案唯一，并要求每套方案时长等于项目目标时长。"""
+
+        concept_keys = [concept.concept_key for concept in self.concepts]
+        if len(set(concept_keys)) != len(concept_keys):
+            raise ValueError("分镜 Prompt concept_key 必须唯一。")
+        product_asset_refs = set(self.product_asset_refs)
+        for concept in self.concepts:
+            total_duration = sum(shot.duration_seconds for shot in concept.shot_prompts)
+            if total_duration != self.duration_seconds:
+                raise ValueError(
+                    f"分镜 Prompt {concept.concept_key} 的镜头总时长必须为 "
+                    f"{self.duration_seconds} 秒。"
+                )
+            for shot in concept.shot_prompts:
+                if shot.generation_mode == "image_to_video":
+                    if shot.image_reference is None:
+                        raise ValueError(
+                            f"分镜 Prompt {concept.concept_key} 的商品展示镜头必须引用商品图片。"
+                        )
+                    if shot.image_reference not in product_asset_refs:
+                        raise ValueError(
+                            f"分镜 Prompt {concept.concept_key} 引用了不属于当前项目的商品图片。"
+                        )
+                elif shot.image_reference is not None:
+                    raise ValueError(
+                        f"分镜 Prompt {concept.concept_key} 的场景动作镜头不能引用商品图片。"
+                    )
+        return self

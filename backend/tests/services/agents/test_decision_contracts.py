@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from copy import deepcopy
 
@@ -13,6 +13,9 @@ from app.application.creative_agent import (
     QualityEvaluation,
     QualityIssue,
     ShotPlan,
+    StoryboardConceptPrompt,
+    StoryboardPromptBundle,
+    StoryboardShotPrompt,
 )
 
 
@@ -78,6 +81,39 @@ def _concept(key: str) -> CreativeConcept:
     )
 
 
+
+def _storyboard(draft: CreativeDraft) -> StoryboardPromptBundle:
+    return StoryboardPromptBundle(
+        product_summary=draft.analysis.product_summary,
+        target_platform="douyin",
+        aspect_ratio="9:16",
+        duration_seconds=15,
+        product_asset_refs=["asset_id=1; storage_key=product.jpg; mime_type=image/jpeg"],
+        global_negative_prompt="不要改变商品主体，不要添加未确认事实。",
+        concepts=[
+            StoryboardConceptPrompt(
+                concept_key=concept.concept_key,
+                title=concept.title,
+                primary_selling_point=concept.primary_selling_point,
+                target_audience=concept.target_audience,
+                shot_prompts=[
+                    StoryboardShotPrompt(
+                        order=shot.order,
+                        duration_seconds=shot.duration_seconds,
+                        generation_mode=shot.generation_mode,
+                        image_reference="asset_id=1; storage_key=product.jpg; mime_type=image/jpeg",
+                        source_purpose=shot.purpose,
+                        positive_prompt=f"生成 {concept.title} 的第 {shot.order} 个镜头：{shot.visual}",
+                        negative_prompt="不要改变商品主体，不要添加未确认事实。",
+                        caption=shot.caption,
+                    )
+                    for shot in concept.shots
+                ],
+            )
+            for concept in draft.concepts
+        ],
+    )
+
 def _draft() -> CreativeDraft:
     return CreativeDraft(
         decision_reason="围绕通勤场景形成三套差异化方向。",
@@ -97,6 +133,7 @@ def test_draft_evaluation_factory_derives_action(
 ) -> None:
     decision = CreativeDecisionBundle.from_draft_evaluation(
         draft=_draft(),
+        storyboard_prompts=_storyboard(_draft()),
         evaluation=_evaluation(passed=passed),
         revision_count=1,
     )
@@ -109,6 +146,7 @@ def test_draft_evaluation_factory_derives_action(
 def test_review_plan_rejects_failed_or_blocked_evaluation() -> None:
     decision = CreativeDecisionBundle.from_draft_evaluation(
         draft=_draft(),
+        storyboard_prompts=_storyboard(_draft()),
         evaluation=_evaluation(passed=True),
         revision_count=0,
     )
@@ -148,6 +186,7 @@ def test_review_plan_rejects_forged_passed_evaluation_with_blocked_issue() -> No
             confidence=draft.confidence,
             analysis=draft.analysis,
             concepts=draft.concepts,
+            storyboard_prompts=_storyboard(draft),
             evaluation=forged_evaluation,
         )
 
@@ -155,6 +194,7 @@ def test_review_plan_rejects_forged_passed_evaluation_with_blocked_issue() -> No
 def test_resolve_quality_issues_rejects_passed_evaluation() -> None:
     decision = CreativeDecisionBundle.from_draft_evaluation(
         draft=_draft(),
+        storyboard_prompts=_storyboard(_draft()),
         evaluation=_evaluation(passed=False),
         revision_count=1,
     )
@@ -180,6 +220,7 @@ def test_resolve_quality_issues_requires_an_actionable_issue() -> None:
     with pytest.raises(ValidationError, match="可处理的质量问题"):
         CreativeDecisionBundle.from_draft_evaluation(
             draft=draft,
+            storyboard_prompts=_storyboard(draft),
             evaluation=failed_without_issue,
             revision_count=1,
         )
@@ -208,6 +249,7 @@ def test_quality_evaluation_rejects_forged_total_and_passed_flag() -> None:
 def test_decision_bundle_rechecks_duplicate_concept_keys() -> None:
     decision = CreativeDecisionBundle.from_draft_evaluation(
         draft=_draft(),
+        storyboard_prompts=_storyboard(_draft()),
         evaluation=_evaluation(passed=True),
         revision_count=0,
     )
@@ -221,6 +263,7 @@ def test_decision_bundle_rechecks_duplicate_concept_keys() -> None:
 def test_evaluated_decision_requires_three_complete_concepts() -> None:
     decision = CreativeDecisionBundle.from_draft_evaluation(
         draft=_draft(),
+        storyboard_prompts=_storyboard(_draft()),
         evaluation=_evaluation(passed=True),
         revision_count=0,
     )
@@ -234,6 +277,7 @@ def test_evaluated_decision_requires_three_complete_concepts() -> None:
 def test_evaluated_decision_rejects_missing_information() -> None:
     decision = CreativeDecisionBundle.from_draft_evaluation(
         draft=_draft(),
+        storyboard_prompts=_storyboard(_draft()),
         evaluation=_evaluation(passed=True),
         revision_count=0,
     )
@@ -252,6 +296,7 @@ def test_direct_construction_remains_supported_for_valid_decisions() -> None:
         confidence=draft.confidence,
         analysis=draft.analysis,
         concepts=draft.concepts,
+        storyboard_prompts=_storyboard(draft),
         evaluation=_evaluation(passed=True),
         revision_count=0,
     )

@@ -8,6 +8,7 @@ from typing import Literal
 from uuid import uuid4
 
 from pydantic import ValidationError
+from sqlalchemy import update
 from sqlmodel import Session, select
 
 from app.application.creative_agent import (
@@ -16,10 +17,13 @@ from app.application.creative_agent import (
     CreativeAssetInput,
     CreativeBriefInput,
     CreativeDecisionBundle,
+    CreativeDraft,
     CreativeProjectInput,
     CreativeRunInput,
     DecisionAction,
+    StoryboardPromptBundle,
 )
+from app.application.storyboard_prompts import build_storyboard_prompt_bundle
 from app.models.creative import AgentRun, CreativeRun, WorkflowNodeRun, WorkflowRun
 from app.models.project import ProductBrief, ProjectAsset, VideoProject, utc_now
 
@@ -37,8 +41,12 @@ RunStatus = Literal[
     "quality_blocked",  # 方案未通过质量门禁，需要处理质量问题。
 ]
 
+
+class StoryboardPromptRevisionConflictError(ValueError):
+    """用户基于过期分镜版本提交复检时抛出。"""
+
 # CreativeRun.output_payload 的信封版本；结构变更时递增并做兼容读取。
-DECISION_PAYLOAD_SCHEMA_VERSION = 1
+DECISION_PAYLOAD_SCHEMA_VERSION = 2
 logger = logging.getLogger(__name__)
 
 
@@ -56,7 +64,13 @@ class CreativeRunProjection:
 def project_run_result(result: CreativeAgentResult) -> CreativeRunProjection:
     """根据最终质量结果计算业务状态和下一步动作。"""
 
-    if result.bundle.evaluation.passed:
+    return project_decision_bundle(result.bundle)
+
+
+def project_decision_bundle(bundle: CreativeDecisionBundle) -> CreativeRunProjection:
+    """根据已校验的公开决策计算页面状态，供首次运行和分镜复检复用。"""
+
+    if bundle.evaluation.passed:
         return CreativeRunProjection(
             status="ready_for_review",
             workflow_status="generation_waiting_confirmation",
@@ -146,6 +160,83 @@ class CreativeRunService:
                 .order_by(WorkflowRun.id.desc())
             ).all()
         )
+
+    def review_storyboard_prompts(
+        self,
+        *,
+        project_id: int,
+        run_id: int,
+        storyboard_prompts: StoryboardPromptBundle,
+        expected_prompt_revision: int,
+    ) -> WorkflowRun:
+        """保存用户编辑后的分镜 Prompt，并只重跑 Prompt Check 与审核门禁投影。"""
+
+        project = self._session.get(VideoProject, project_id)
+        if project is None:
+            raise KeyError(f"找不到项目：{project_id}")
+        run = self._session.get(WorkflowRun, run_id)
+        if run is None or run.project_id != project_id:
+            raise KeyError(f"找不到项目运行：{run_id}")
+        if expected_prompt_revision != self.prompt_revision(run):
+            raise StoryboardPromptRevisionConflictError(
+                "分镜 Prompt 已被其他编辑更新，请刷新后再提交。"
+            )
+        current_decision = self.decision_for_run(run)
+        if current_decision is None:
+            raise ValueError("当前运行没有可编辑的分镜 Prompt，请重新生成方案。")
+
+        reviewed_decision = self._agent.review_storyboard_prompts(
+            decision=current_decision,
+            storyboard_prompts=storyboard_prompts,
+            require_semantic_review=self.provider_key(run) == "openai_compatible",
+        )
+        return self._apply_storyboard_prompt_review(
+            run=run,
+            project=project,
+            bundle=reviewed_decision,
+            expected_prompt_revision=expected_prompt_revision,
+        )
+
+    def decision_for_run(self, run: WorkflowRun) -> CreativeDecisionBundle | None:
+        """读取当前决策，必要时为 schema 1 历史结果按需补齐分镜 Prompt。"""
+
+        decision = self.parse_result(run)
+        if decision is not None:
+            return decision
+        payload = self._stored_decision_payload(run)
+        if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+            return None
+        legacy_decision = payload.get("decision")
+        if not isinstance(legacy_decision, dict):
+            return None
+
+        try:
+            project, brief, assets = self._load_project_context(run.project_id)
+            analysis = legacy_decision["analysis"]
+            concepts = legacy_decision["concepts"]
+            draft = CreativeDraft(
+                analysis=analysis,
+                decision_reason=legacy_decision["decision_reason"],
+                confidence=legacy_decision["confidence"],
+                concepts=concepts,
+            )
+            run_input = self._to_run_input(
+                project=project,
+                brief=brief,
+                assets=assets,
+                campaign_goal=self.campaign_goal(run) or "恢复历史创意审核结果",
+            )
+            upgraded_decision = {
+                **legacy_decision,
+                "storyboard_prompts": build_storyboard_prompt_bundle(
+                    run_input=run_input,
+                    draft=draft,
+                ).model_dump(mode="json"),
+            }
+            return CreativeDecisionBundle.model_validate(upgraded_decision)
+        except (KeyError, ValidationError, ValueError) as exc:
+            logger.warning("Unable to adapt schema 1 creative decision for run %s: %s", run.id, exc)
+            return None
 
     @staticmethod
     def parse_result(run: WorkflowRun | CreativeRun) -> CreativeDecisionBundle | None:
@@ -322,15 +413,7 @@ class CreativeRunService:
             provider_key="local",
             model_key=None,
             input_payload={"concept_count": len(bundle.concepts)},
-            output_payload={
-                "storyboards": [
-                    {
-                        "concept_key": concept.concept_key,
-                        "shots": [shot.model_dump(mode="json") for shot in concept.shots],
-                    }
-                    for concept in bundle.concepts
-                ],
-            },
+            output_payload=bundle.storyboard_prompts.model_dump(mode="json"),
         )
         self._record_agent_node(
             run=run,
@@ -377,6 +460,84 @@ class CreativeRunService:
         self._session.refresh(run)
         return run
 
+    def _apply_storyboard_prompt_review(
+        self,
+        *,
+        run: WorkflowRun,
+        project: VideoProject,
+        bundle: CreativeDecisionBundle,
+        expected_prompt_revision: int,
+    ) -> WorkflowRun:
+        """把人工编辑后的 Prompt Check 结果覆盖为当前决策，并保留节点级审计记录。"""
+
+        projection = project_decision_bundle(bundle)
+        decision_payload = serialize_decision_result(bundle)
+        edit_count = self.prompt_revision_count(run) + 1
+        next_prompt_revision = expected_prompt_revision + 1
+        claim = self._session.execute(
+            update(WorkflowRun)
+            .where(WorkflowRun.id == run.id)
+            .where(WorkflowRun.prompt_revision == expected_prompt_revision)
+            .values(prompt_revision=next_prompt_revision)
+            .execution_options(synchronize_session=False)
+        )
+        if claim.rowcount != 1:
+            self._session.rollback()
+            raise StoryboardPromptRevisionConflictError(
+                "分镜 Prompt 已被其他编辑更新，请刷新后再提交。"
+            )
+        run.prompt_revision = next_prompt_revision
+        self._record_agent_node(
+            run=run,
+            node_name=PROMPT_CHECK_NODE,
+            provider_key="local",
+            model_key=None,
+            input_payload={
+                "source": "user_storyboard_edit",
+                "prompt_revision_count": edit_count,
+                "concept_count": len(bundle.storyboard_prompts.concepts),
+            },
+            output_payload={
+                "storyboard_prompts": bundle.storyboard_prompts.model_dump(mode="json"),
+                "evaluation": bundle.evaluation.model_dump(mode="json"),
+            },
+        )
+        self._record_agent_node(
+            run=run,
+            node_name=REVIEW_COST_GATE_NODE,
+            provider_key="local",
+            model_key=None,
+            input_payload={
+                "source": "user_storyboard_edit",
+                "prompt_revision_count": edit_count,
+            },
+            output_payload=decision_payload,
+        )
+
+        run.status = "waiting_confirmation"
+        run.current_node = projection.current_node
+        run.pending_confirmation = projection.pending_confirmation
+        run.workflow_status = projection.workflow_status
+        run.error_message = None
+        run.updated_at = utc_now()
+        run.completed_at = utc_now()
+        run.run_metadata = {
+            **(run.run_metadata or {}),
+            "public_status": projection.status,
+            "action": projection.action,
+            "confidence": bundle.confidence,
+            "revision_count": bundle.revision_count,
+            "prompt_revision_count": edit_count,
+            "decision_payload": decision_payload,
+        }
+        project.status = projection.status
+        project.updated_at = utc_now()
+        self._session.add(project)
+        self._session.add(run)
+        self._session.commit()
+        self._session.refresh(run)
+        return run
+
     def _mark_failed(
         self,
         run: WorkflowRun,
@@ -397,6 +558,7 @@ class CreativeRunService:
             "product_understanding_provider_key",
             "provider_key",
             "public_status",
+            "prompt_revision_count",
             "revision_count",
         }
         run.run_metadata = {
@@ -517,6 +679,19 @@ class CreativeRunService:
 
         revision_count = (run.run_metadata or {}).get("revision_count")
         return revision_count if isinstance(revision_count, int) else 0
+
+    @staticmethod
+    def prompt_revision_count(run: WorkflowRun) -> int:
+        """读取用户编辑并复检分镜 Prompt 的次数。"""
+
+        revision_count = (run.run_metadata or {}).get("prompt_revision_count")
+        return revision_count if isinstance(revision_count, int) else 0
+
+    @staticmethod
+    def prompt_revision(run: WorkflowRun) -> int:
+        """读取用于乐观锁的分镜编辑版本。"""
+
+        return run.prompt_revision
 
     @staticmethod
     def campaign_goal(run: WorkflowRun) -> str | None:

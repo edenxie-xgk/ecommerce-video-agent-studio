@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useMessage, type UploadCustomRequestOptions } from 'naive-ui'
-import type { ProductBrief } from '../api/client'
+import type { ProductBrief, StoryboardPromptBundle } from '../api/client'
 import AgentDecisionPanel from '../components/AgentDecisionPanel.vue'
 import CreativeBriefPanel from '../components/CreativeBriefPanel.vue'
 import ProjectRail from '../components/ProjectRail.vue'
@@ -41,6 +41,9 @@ const campaignGoal = computed({
 })
 const selectedProjectPlanning = computed(
   () => store.planningProjectId !== null && store.planningProjectId === store.selectedProjectId,
+)
+const selectedRunReviewing = computed(
+  () => store.promptReviewingRunId !== null && store.promptReviewingRunId === latestRun.value?.id,
 )
 const workspaceBusy = computed(() => store.operationBusy || store.projectLoading)
 
@@ -102,7 +105,8 @@ async function generatePlan() {
   const projectId = project.id
   const briefSnapshot = { ...briefForm }
   const productImages = pendingProductImages[projectId] ?? []
-  if (productImages.length === 0) {
+  const savedImageCount = store.assets.filter((asset) => asset.type === 'product_image').length
+  if (productImages.length === 0 && savedImageCount === 0) {
     message.error('请先选择至少一张商品图片，再让 Agent 制定方案')
     return
   }
@@ -126,6 +130,32 @@ async function generatePlan() {
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '创意方案生成失败')
+  }
+}
+
+async function reviewStoryboardPrompts(storyboardPrompts: StoryboardPromptBundle) {
+  const project = selectedProject.value
+  const run = latestRun.value
+  if (!project || !run || workspaceBusy.value) return
+  try {
+    const updatedRun = await store.reviewStoryboardPrompts(
+      project.id,
+      run.id,
+      run.prompt_revision,
+      storyboardPrompts,
+    )
+    if (updatedRun.result?.evaluation.passed) {
+      message.success('分镜 Prompt 已复检通过，方案保持待审核状态')
+    } else {
+      message.error('分镜 Prompt 未通过复检，请根据阻断项继续调整')
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : '分镜 Prompt 复检失败'
+    if (detail.includes('已被其他编辑更新')) {
+      message.warning(`${detail} 页面已刷新为最新结果。`)
+    } else {
+      message.error(detail)
+    }
   }
 }
 
@@ -185,7 +215,9 @@ function removePendingProductImage(file: File) {
     <AgentDecisionPanel
       :run="latestRun"
       :planning="selectedProjectPlanning"
+      :reviewing="selectedRunReviewing"
       :busy="workspaceBusy"
+      @review-storyboard-prompts="reviewStoryboardPrompts"
     />
   </main>
 </template>

@@ -1,8 +1,11 @@
 ﻿from collections.abc import Callable
 from copy import deepcopy
 
-from app.agents.modeling.provider import ModelJsonResponse
-from app.agents.nodes.creative_script import build_local_draft
+import pytest
+
+from app.agents.modeling.generation import build_authoritative_draft
+from app.agents.modeling.provider import ModelJsonResponse, ProviderResponseError
+from app.agents.nodes.creative_script import build_local_draft, build_model_input
 from app.agents.planner import CreativePlanner
 from app.application.creative_agent import (
     CreativeBriefInput,
@@ -44,6 +47,118 @@ def _analysis_overriding_payload(
         readiness_score=100,
     ).model_dump(mode="json")
     return payload
+
+
+def test_creative_model_input_includes_product_understanding_evidence(
+    run_input_factory: Callable[..., CreativeRunInput],
+) -> None:
+    """creative_script 调用模型时应携带商品理解阶段的证据包。"""
+
+    analysis = ProductAnalysis(
+        product_summary="Portable thermal cup",
+        inferred_category="通勤保温杯",
+        inferred_selling_points=["Lightweight", "sealed lid"],
+        inferred_audience=["Commuters"],
+        visual_evidence_count=1,
+        visual_observations=["blue body", "visible handle"],
+        visual_uncertainties=["actual insulation duration is unknown"],
+        material_conflicts=[],
+        constraints=["permanent"],
+        missing_information=[],
+        readiness_score=82,
+    )
+
+    payload = build_model_input(
+        run_input_factory(),
+        analysis=analysis,
+        selling_points=analysis.inferred_selling_points,
+    )
+
+    assert payload["product_name"] == "Portable thermal cup"
+    assert payload["product_analysis"] == {
+        "inferred_category": "通勤保温杯",
+        "selected_selling_points": ["Lightweight", "sealed lid"],
+        "selected_audience": ["Commuters"],
+        "visual_evidence_count": 1,
+        "visual_observations": ["blue body", "visible handle"],
+        "visual_uncertainties": ["actual insulation duration is unknown"],
+        "material_conflicts": [],
+        "readiness_score": 82,
+    }
+
+
+def test_creative_payload_rejects_unconfirmed_audience(
+    project_factory: Callable[..., CreativeProjectInput],
+    complete_brief: CreativeBriefInput,
+) -> None:
+    """模型草案面向的人群需要命中用户确认清单。"""
+
+    analysis = ProductAnalysis(
+        product_summary="Portable thermal cup",
+        inferred_category="通勤保温杯",
+        inferred_selling_points=["Lightweight", "sealed lid"],
+        inferred_audience=["Commuters"],
+        visual_evidence_count=1,
+        constraints=[],
+        missing_information=[],
+        readiness_score=100,
+    )
+    payload = build_local_draft(
+        project=project_factory(),
+        brief=complete_brief,
+        analysis=analysis,
+        campaign_goal="Increase product detail views",
+    ).model_dump(mode="json")
+    payload.pop("analysis")
+    payload["concepts"][0]["target_audience"] = "Everyone"
+
+    with pytest.raises(ProviderResponseError, match="未经过确认的目标人群"):
+        build_authoritative_draft(
+            payload=payload,
+            analysis=analysis,
+            allowed_selling_points=["Lightweight", "sealed lid"],
+            allowed_audience=["Commuters"],
+            forbidden_words=[],
+            uncertain_visual_facts=[],
+        )
+
+
+def test_creative_payload_rejects_visual_uncertainty_as_fact(
+    project_factory: Callable[..., CreativeProjectInput],
+    complete_brief: CreativeBriefInput,
+) -> None:
+    """图片无法确认的信息不能进入最终创意文案。"""
+
+    uncertainty = "actual insulation duration is unknown"
+    analysis = ProductAnalysis(
+        product_summary="Portable thermal cup",
+        inferred_category="通勤保温杯",
+        inferred_selling_points=["Lightweight", "sealed lid"],
+        inferred_audience=["Commuters"],
+        visual_evidence_count=1,
+        visual_uncertainties=[uncertainty],
+        constraints=[],
+        missing_information=[],
+        readiness_score=80,
+    )
+    payload = build_local_draft(
+        project=project_factory(),
+        brief=complete_brief,
+        analysis=analysis,
+        campaign_goal="Increase product detail views",
+    ).model_dump(mode="json")
+    payload.pop("analysis")
+    payload["concepts"][0]["hook"] = f"{uncertainty}，但适合通勤展示。"
+
+    with pytest.raises(ProviderResponseError, match="图片无法确认的信息"):
+        build_authoritative_draft(
+            payload=payload,
+            analysis=analysis,
+            allowed_selling_points=["Lightweight", "sealed lid"],
+            allowed_audience=["Commuters"],
+            forbidden_words=[],
+            uncertain_visual_facts=[uncertainty],
+        )
 
 
 class AnalysisOverridingProvider:

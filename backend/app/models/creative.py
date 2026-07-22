@@ -41,6 +41,11 @@ class WorkflowRun(SQLModel, table=True):
         default="draft",
         description="面向业务页面恢复的工作流阶段状态。",
     )
+    prompt_revision: int = Field(
+        default=0,
+        nullable=False,
+        description="分镜 Prompt 编辑的乐观锁版本；每次成功复检递增。",
+    )
     started_at: datetime = Field(default_factory=utc_now, description="工作流开始时间。")
     updated_at: datetime = Field(default_factory=utc_now, description="工作流更新时间。")
     completed_at: datetime | None = Field(default=None, description="当前自动运行段完成时间。")

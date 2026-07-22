@@ -26,6 +26,9 @@ from app.application.creative_agent import (
     QualityEvaluation,
     QualityIssue,
     ShotPlan,
+    StoryboardConceptPrompt,
+    StoryboardPromptBundle,
+    StoryboardShotPrompt,
 )
 from app.application.creative_plan import CreativePlanContent
 from app.core.config import Settings
@@ -53,6 +56,9 @@ SCHEMAS: tuple[type[BaseModel], ...] = (
     CreativeConcept,
     CreativePlanContent,
     CreativeDraft,
+    StoryboardShotPrompt,
+    StoryboardConceptPrompt,
+    StoryboardPromptBundle,
     GeneratedCreativeDraft,
     QualityIssue,
     QualityEvaluation,

@@ -222,7 +222,7 @@ def test_unversioned_creative_run_base_schema_resumes_from_actual_revision(
                 text("SELECT asset_type FROM project_assets WHERE id = 2")
             ).scalar_one() == "legacy_unverified_image"
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-                "0006_preserve_run_history"
+                "0007_prompt_revision"
             )
 
 

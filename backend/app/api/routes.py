@@ -10,6 +10,7 @@ from app.api.schemas import (
     ProjectAssetResponse,
     ProjectCreatePayload,
     ProjectResponse,
+    StoryboardPromptUpdatePayload,
 )
 from app.models.creative import WorkflowRun
 from app.models.project import ProductBrief, ProjectAsset, VideoProject
@@ -22,7 +23,8 @@ from app.services.assets.local import (
     UnsupportedImageTypeError,
     UploadedAssetDraft,
 )
-from app.application.creative_runs import CreativeRunService
+from app.application.creative_runs import CreativeRunService, StoryboardPromptRevisionConflictError
+from app.application.creative_decision import CreativeDecisionBundle
 from app.services.projects import ProductBriefInput, ProjectCreateInput, ProjectService
 
 
@@ -82,12 +84,17 @@ def create_creative_run(
     target_audience_text: str = Form(default=""),
     brand_tone: str = Form(default=""),
     forbidden_words_text: str = Form(default=""),
-    product_images: list[UploadFile] = File(...),
+    product_images: list[UploadFile] = File(default=[]),
 ) -> CreativeRunResponse:
     project_service = ProjectService(session)
     _get_project_or_404(project_service, project_id)
 
-    if not product_images:
+    existing_product_images = [
+        asset
+        for asset in project_service.list_assets(project_id)
+        if asset.asset_type == "product_image"
+    ]
+    if not product_images and not existing_product_images:
         raise HTTPException(status_code=400, detail="请至少上传一张商品图片。")
 
     asset_service = LocalAssetService(session)
@@ -156,7 +163,35 @@ def list_creative_runs(
     service: CreativeRunServiceDep,
 ) -> list[CreativeRunResponse]:
     _get_project_or_404(ProjectService(session), project_id)
-    return [_creative_run_to_response(run) for run in service.list_for_project(project_id)]
+    return [
+        _creative_run_to_response(run, result=service.decision_for_run(run))
+        for run in service.list_for_project(project_id)
+    ]
+
+
+@router.put("/projects/{project_id}/creative-runs/{run_id}/storyboard-prompts")
+def review_storyboard_prompts(
+    project_id: int,
+    run_id: int,
+    payload: StoryboardPromptUpdatePayload,
+    service: CreativeRunServiceDep,
+) -> CreativeRunResponse:
+    """保存用户调整后的分镜 Prompt，并返回新的 Prompt Check 结果。"""
+
+    try:
+        run = service.review_storyboard_prompts(
+            project_id=project_id,
+            run_id=run_id,
+            storyboard_prompts=payload.storyboard_prompts,
+            expected_prompt_revision=payload.expected_prompt_revision,
+        )
+    except StoryboardPromptRevisionConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _creative_run_to_response(run)
 
 
 def _to_product_brief_input(payload: ProductBriefPayload) -> ProductBriefInput:
@@ -225,9 +260,14 @@ def _asset_to_response(asset: ProjectAsset) -> ProjectAssetResponse:
     )
 
 
-def _creative_run_to_response(run: WorkflowRun) -> CreativeRunResponse:
+def _creative_run_to_response(
+    run: WorkflowRun,
+    *,
+    result: CreativeDecisionBundle | None = None,
+) -> CreativeRunResponse:
     campaign_goal = CreativeRunService.campaign_goal(run)
-    result = CreativeRunService.parse_result(run)
+    if result is None:
+        result = CreativeRunService.parse_result(run)
     error_message = run.error_message
     if (run.run_metadata or {}).get("decision_payload") is not None and result is None:
         error_message = "历史创意结果与当前契约不兼容，请重新生成。"
@@ -241,6 +281,8 @@ def _creative_run_to_response(run: WorkflowRun) -> CreativeRunResponse:
         provider=CreativeRunService.provider_key(run),
         model=CreativeRunService.model_key(run),
         revision_count=CreativeRunService.revision_count(run),
+        prompt_revision_count=CreativeRunService.prompt_revision_count(run),
+        prompt_revision=CreativeRunService.prompt_revision(run),
         result=result,
         started_at=run.started_at.isoformat(),
         completed_at=run.completed_at.isoformat() if run.completed_at else None,

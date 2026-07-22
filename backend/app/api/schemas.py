@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from app.application.creative_agent import CreativeDecisionBundle
+from app.application.creative_agent import CreativeDecisionBundle, StoryboardPromptBundle
 
 
 class ProductBriefPayload(BaseModel):
@@ -58,6 +58,18 @@ class ProjectAssetResponse(BaseModel):
     created_at: str = Field(description="素材创建时间。")
 
 
+class StoryboardPromptUpdatePayload(BaseModel):
+    """接收用户确认后的分镜 Prompt 编辑内容。"""
+
+    expected_prompt_revision: int = Field(
+        ge=0,
+        description="用户开始编辑时读取到的分镜 Prompt 版本，用于拒绝过期覆盖。",
+    )
+    storyboard_prompts: StoryboardPromptBundle = Field(
+        description="用户修改后的三套分镜视频执行 Prompt。"
+    )
+
+
 class CreativeRunResponse(BaseModel):
     id: int = Field(description="创意运行 ID。")
     project_id: int = Field(description="所属项目 ID。")
@@ -71,6 +83,8 @@ class CreativeRunResponse(BaseModel):
     provider: str = Field(description="实际完成生成的 Provider 标识。")
     model: str | None = Field(description="实际完成生成的模型标识。")
     revision_count: int = Field(description="自动修订次数。")
+    prompt_revision_count: int = Field(description="用户编辑并复检分镜 Prompt 的次数。")
+    prompt_revision: int = Field(description="当前分镜 Prompt 的乐观锁版本。")
     result: CreativeDecisionBundle | None = Field(description="通过校验的创意决策结果。")
     started_at: str = Field(description="运行开始时间。")
     completed_at: str | None = Field(description="运行完成时间。")

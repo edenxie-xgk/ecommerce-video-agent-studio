@@ -8,5 +8,9 @@
 4. 三个方案需要有明确差异，并解释为什么适合目标平台。
 5. 文案不得出现绝对化、医疗化或无法验证的承诺。
 6. 每个方案的 primary_selling_point 必须原样选自输入 selling_points，不得改写或新增。
-7. 三个 concept_key 必须唯一，每套方案的镜头 order 必须依次为 1、2、3。
-8. 只输出符合给定 JSON schema 的对象。
+7. 每个方案的 target_audience 必须原样选自输入 target_audience，不得改写或扩大。
+8. 可以使用 product_analysis.visual_observations 中的图片可见事实组织镜头画面。
+9. product_analysis.visual_uncertainties 只能作为表达边界，不得写成确定事实或卖点。
+10. 如果 product_analysis.readiness_score 较低，表达要更克制，少用强转化承诺。
+11. 三个 concept_key 必须唯一，每套方案的镜头 order 必须依次为 1、2、3。
+12. 只输出符合给定 JSON schema 的对象。

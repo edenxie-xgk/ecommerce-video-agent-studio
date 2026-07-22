@@ -184,6 +184,45 @@
   gap: 5px;
 }
 
+.analysis-note-list {
+  margin-top: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 5px;
+  border-radius: 6px;
+  color: #27544d;
+  background: #eefaf6;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.analysis-note-list strong {
+  color: #173f39;
+  font-size: 11px;
+}
+
+.analysis-note-list span::before {
+  content: "· ";
+}
+
+.analysis-note-list.muted {
+  color: #6a5a21;
+  background: #fff8df;
+}
+
+.analysis-note-list.muted strong {
+  color: #5c4511;
+}
+
+.analysis-note-list.blocked {
+  color: #9f2f24;
+  background: #fff0ee;
+}
+
+.analysis-note-list.blocked strong {
+  color: #5e211b;
+}
+
 .concept-section {
   margin-top: 22px;
 }
@@ -315,6 +354,113 @@
   color: #0f766e;
   font-size: 11px;
   text-align: right;
+}
+
+.storyboard-section {
+  margin-top: 22px;
+}
+
+.storyboard-constraints {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.storyboard-constraints > span,
+.storyboard-field > span,
+.storyboard-controls label > span {
+  color: #596762;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.storyboard-concept {
+  margin-top: 10px;
+  overflow: hidden;
+  border: 1px solid #d8e0dd;
+  border-radius: 7px;
+  background: #ffffff;
+}
+
+.storyboard-concept > header {
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e5eae8;
+  background: #fafcfb;
+}
+
+.storyboard-concept h4 {
+  color: #293632;
+  font-size: 13px;
+}
+
+.storyboard-concept header span {
+  display: block;
+  margin-top: 3px;
+  color: #6a7773;
+  font-size: 11px;
+}
+
+.storyboard-concept header .n-tag {
+  flex: 0 0 auto;
+}
+
+.storyboard-shot {
+  padding: 14px;
+  border-bottom: 1px solid #edf0ef;
+}
+
+.storyboard-shot:last-child {
+  border-bottom: 0;
+}
+
+.storyboard-shot-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.storyboard-shot-heading strong {
+  color: #293632;
+  font-size: 12px;
+}
+
+.storyboard-shot-heading span,
+.storyboard-caption {
+  color: #6a7773;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.storyboard-controls {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.storyboard-controls label,
+.storyboard-field {
+  display: grid;
+  gap: 6px;
+}
+
+.storyboard-field {
+  margin-top: 10px;
+}
+
+.storyboard-caption {
+  margin-top: 8px;
+}
+
+.storyboard-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .overall-score {

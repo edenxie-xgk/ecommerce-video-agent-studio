@@ -1,20 +1,30 @@
 <script setup lang="ts">
-import { computed } from 'vue'
-import { NAlert, NProgress, NTag } from 'naive-ui'
+import { computed, ref, watch } from 'vue'
+import { NAlert, NButton, NIcon, NInput, NProgress, NSelect, NTag } from 'naive-ui'
 import {
   AlertTriangle,
   BrainCircuit,
   CheckCircle2,
   CircleGauge,
   Lightbulb,
+  ShieldCheck,
 } from '@lucide/vue'
-import type { CreativeRun } from '../api/client'
+import type {
+  CreativeRun,
+  StoryboardPromptBundle,
+  StoryboardShotPrompt,
+} from '../api/client'
 import { dimensionLabels, projectStatusLabels } from '../constants/studio'
 
 const props = defineProps<{
   run: CreativeRun | null
   planning: boolean
+  reviewing: boolean
   busy: boolean
+}>()
+
+const emit = defineEmits<{
+  'review-storyboard-prompts': [storyboardPrompts: StoryboardPromptBundle]
 }>()
 
 const decision = computed(() => props.run?.result ?? null)
@@ -28,6 +38,27 @@ const qualityBlocked = computed(
 const runLoading = computed(
   () => props.planning || (props.run?.status === 'running' && decision.value === null),
 )
+const editableStoryboardPrompts = ref<StoryboardPromptBundle | null>(null)
+const generationModeOptions = [
+  { label: '商品展示', value: 'image_to_video' },
+  { label: '场景动作', value: 'text_to_video' },
+]
+const imageReferenceOptions = computed(() =>
+  (editableStoryboardPrompts.value?.product_asset_refs ?? []).map((reference, index) => ({
+    label: `商品图 ${index + 1}`,
+    value: reference,
+  })),
+)
+
+watch(
+  () => decision.value?.storyboard_prompts,
+  (storyboardPrompts) => {
+    editableStoryboardPrompts.value = storyboardPrompts
+      ? JSON.parse(JSON.stringify(storyboardPrompts)) as StoryboardPromptBundle
+      : null
+  },
+  { immediate: true },
+)
 
 function runTagType(status: string): 'success' | 'warning' | 'error' | 'info' {
   if (status === 'ready_for_review') return 'success'
@@ -40,6 +71,21 @@ function scoreStatus(score: number) {
   if (score >= 85) return 'success'
   if (score >= 70) return 'warning'
   return 'error'
+}
+
+function updateGenerationMode(shot: StoryboardShotPrompt, value: unknown) {
+  if (value !== 'image_to_video' && value !== 'text_to_video') return
+  shot.generation_mode = value
+  if (value === 'text_to_video') {
+    shot.image_reference = null
+  } else if (!shot.image_reference) {
+    shot.image_reference = editableStoryboardPrompts.value?.product_asset_refs[0] ?? null
+  }
+}
+
+function reviewStoryboardPrompts() {
+  if (!editableStoryboardPrompts.value || props.busy) return
+  emit('review-storyboard-prompts', editableStoryboardPrompts.value)
 }
 </script>
 
@@ -139,6 +185,33 @@ function scoreStatus(score: number) {
               </n-tag>
             </div>
           </div>
+          <div
+            v-if="decision.analysis.visual_observations.length"
+            class="analysis-note-list"
+          >
+            <strong>图片可见事实</strong>
+            <span v-for="item in decision.analysis.visual_observations" :key="item">
+              {{ item }}
+            </span>
+          </div>
+          <div
+            v-if="decision.analysis.visual_uncertainties.length"
+            class="analysis-note-list muted"
+          >
+            <strong>图片无法确认</strong>
+            <span v-for="item in decision.analysis.visual_uncertainties" :key="item">
+              {{ item }}
+            </span>
+          </div>
+          <div
+            v-if="decision.analysis.material_conflicts.length"
+            class="analysis-note-list blocked"
+          >
+            <strong>资料冲突</strong>
+            <span v-for="item in decision.analysis.material_conflicts" :key="item">
+              {{ item }}
+            </span>
+          </div>
         </section>
 
         <section class="concept-section">
@@ -192,6 +265,104 @@ function scoreStatus(score: number) {
               <strong>{{ concept.call_to_action }}</strong>
             </footer>
           </article>
+        </section>
+
+        <section v-if="editableStoryboardPrompts" class="storyboard-section">
+          <div class="section-heading-row">
+            <div>
+              <span class="eyebrow">Storyboard Prompt</span>
+              <h3>镜头执行指令</h3>
+            </div>
+            <n-tag size="small" type="info">
+              {{ run?.prompt_revision_count ?? 0 }} 次复检
+            </n-tag>
+          </div>
+
+          <div class="storyboard-constraints">
+            <span>全局安全约束</span>
+            <n-input
+              :value="editableStoryboardPrompts.global_negative_prompt"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              disabled
+            />
+          </div>
+
+          <article
+            v-for="concept in editableStoryboardPrompts.concepts"
+            :key="concept.concept_key"
+            class="storyboard-concept"
+          >
+            <header>
+              <div>
+                <h4>{{ concept.title }}</h4>
+                <span>{{ concept.primary_selling_point }}</span>
+              </div>
+              <n-tag size="small">{{ concept.target_audience }}</n-tag>
+            </header>
+
+            <div
+              v-for="shot in concept.shot_prompts"
+              :key="shot.order"
+              class="storyboard-shot"
+            >
+              <div class="storyboard-shot-heading">
+                <strong>镜头 {{ shot.order }}</strong>
+                <span>{{ shot.duration_seconds }}s · {{ shot.source_purpose }}</span>
+              </div>
+              <div class="storyboard-controls">
+                <label>
+                  <span>生成方式</span>
+                  <n-select
+                    :value="shot.generation_mode"
+                    :options="generationModeOptions"
+                    :disabled="busy"
+                    @update:value="updateGenerationMode(shot, $event)"
+                  />
+                </label>
+                <label>
+                  <span>商品图引用</span>
+                  <n-select
+                    v-model:value="shot.image_reference"
+                    :options="imageReferenceOptions"
+                    :disabled="busy || shot.generation_mode === 'text_to_video'"
+                    clearable
+                  />
+                </label>
+              </div>
+              <label class="storyboard-field">
+                <span>正向 Prompt</span>
+                <n-input
+                  v-model:value="shot.positive_prompt"
+                  type="textarea"
+                  :autosize="{ minRows: 3, maxRows: 7 }"
+                  :disabled="busy"
+                />
+              </label>
+              <label class="storyboard-field">
+                <span>负向 Prompt</span>
+                <n-input
+                  v-model:value="shot.negative_prompt"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 5 }"
+                  :disabled="busy"
+                />
+              </label>
+              <p class="storyboard-caption">字幕：{{ shot.caption }}</p>
+            </div>
+          </article>
+
+          <footer class="storyboard-actions">
+            <n-button
+              type="primary"
+              :loading="reviewing"
+              :disabled="busy || !editableStoryboardPrompts"
+              @click="reviewStoryboardPrompts"
+            >
+              <template #icon><n-icon :component="ShieldCheck" /></template>
+              复检分镜 Prompt
+            </n-button>
+          </footer>
         </section>
 
         <section class="evaluation-panel">

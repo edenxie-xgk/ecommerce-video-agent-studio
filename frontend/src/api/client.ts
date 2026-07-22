@@ -93,6 +93,9 @@ export type ProductAnalysis = {
   inferred_selling_points: string[]
   inferred_audience: string[]
   visual_evidence_count: number
+  visual_observations: string[] // 图片中可直接看到的颜色、结构、包装等事实。
+  visual_uncertainties: string[] // 图片无法证明、需要用户补充的信息。
+  material_conflicts: string[] // 图片可见事实与商品资料直接冲突的问题。
   constraints: string[]
   missing_information: string[]
   readiness_score: number
@@ -105,6 +108,35 @@ export type ShotPlan = {
   visual: string
   caption: string
   generation_mode: GenerationMode
+}
+
+export type StoryboardShotPrompt = {
+  order: number
+  duration_seconds: number
+  generation_mode: GenerationMode
+  image_reference?: string | null
+  source_purpose: string
+  positive_prompt: string
+  negative_prompt: string
+  caption: string
+}
+
+export type StoryboardConceptPrompt = {
+  concept_key: string
+  title: string
+  primary_selling_point: string
+  target_audience: string
+  shot_prompts: StoryboardShotPrompt[]
+}
+
+export type StoryboardPromptBundle = {
+  product_summary: string
+  target_platform: string
+  aspect_ratio: string
+  duration_seconds: number
+  product_asset_refs: string[]
+  global_negative_prompt: string
+  concepts: StoryboardConceptPrompt[]
 }
 
 export type CreativeConcept = {
@@ -140,6 +172,7 @@ export type CreativeDecision = {
   confidence: number
   analysis: ProductAnalysis
   concepts: CreativeConcept[]
+  storyboard_prompts: StoryboardPromptBundle
   evaluation: QualityEvaluation
   revision_count: number
 }
@@ -154,6 +187,8 @@ export type CreativeRun = {
   provider: string
   model?: string | null
   revision_count: number
+  prompt_revision_count: number
+  prompt_revision: number
   result?: CreativeDecision | null
   started_at: string
   completed_at?: string | null
@@ -165,6 +200,13 @@ export type CreateCreativeRunInput = {
   campaignGoal: string
   productBrief: ProductBrief
   productImages: File[]
+}
+
+export type ReviewStoryboardPromptsInput = {
+  projectId: number
+  runId: number
+  expectedPromptRevision: number
+  storyboardPrompts: StoryboardPromptBundle
 }
 
 export const api = {
@@ -196,4 +238,17 @@ export const api = {
       body: form,
     })
   },
+  reviewStoryboardPrompts: ({
+    projectId,
+    runId,
+    expectedPromptRevision,
+    storyboardPrompts,
+  }: ReviewStoryboardPromptsInput) =>
+    request<CreativeRun>(`/projects/${projectId}/creative-runs/${runId}/storyboard-prompts`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        expected_prompt_revision: expectedPromptRevision,
+        storyboard_prompts: storyboardPrompts,
+      }),
+    }),
 }

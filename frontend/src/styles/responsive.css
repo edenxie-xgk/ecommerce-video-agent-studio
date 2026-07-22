@@ -56,7 +56,8 @@
   }
 
   .form-grid,
-  .concept-meta {
+  .concept-meta,
+  .storyboard-controls {
     grid-template-columns: 1fr;
   }
 

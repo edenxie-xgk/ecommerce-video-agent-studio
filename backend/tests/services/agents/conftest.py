@@ -46,10 +46,19 @@ def use_local_agent_models(monkeypatch):
 
 @pytest.fixture
 def use_agent_provider(monkeypatch):
-    def apply(provider):
-        monkeypatch.setattr(config_model, "product_understanding_model", lambda: provider)
-        monkeypatch.setattr(config_model, "creative_script_model", lambda: provider)
-        monkeypatch.setattr(config_model, "prompt_check_model", lambda: provider)
+    def apply(
+        provider,
+        *,
+        product_understanding: bool = True,
+        creative_script: bool = True,
+        prompt_check: bool = True,
+    ):
+        if product_understanding:
+            monkeypatch.setattr(config_model, "product_understanding_model", lambda: provider)
+        if creative_script:
+            monkeypatch.setattr(config_model, "creative_script_model", lambda: provider)
+        if prompt_check:
+            monkeypatch.setattr(config_model, "prompt_check_model", lambda: provider)
         return provider
 
     return apply

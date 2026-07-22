@@ -10,6 +10,7 @@ from app.application.creative_plan import (
     CreativeConcept,
     CreativeDraft,
     ProductAnalysis,
+    StoryboardPromptBundle,
     validate_plan_concepts,
 )
 
@@ -128,6 +129,9 @@ class CreativeDecisionBundle(BaseModel):
     concepts: list[CreativeConcept] = Field(
         description="通过生成和修订得到的创意方案。",
     )
+    storyboard_prompts: StoryboardPromptBundle = Field(
+        description="由分镜 Prompt 节点生成的视频执行指令。",
+    )
     evaluation: QualityEvaluation = Field(description="最终一轮自动质量评估。")
     revision_count: int = Field(
         default=0,
@@ -141,6 +145,7 @@ class CreativeDecisionBundle(BaseModel):
         cls,
         *,
         draft: CreativeDraft,
+        storyboard_prompts: StoryboardPromptBundle,
         evaluation: QualityEvaluation,
         revision_count: int,
     ) -> Self:
@@ -152,6 +157,7 @@ class CreativeDecisionBundle(BaseModel):
             confidence=draft.confidence,
             analysis=draft.analysis,
             concepts=draft.concepts,
+            storyboard_prompts=storyboard_prompts,
             evaluation=evaluation,
             revision_count=revision_count,
         )
@@ -165,6 +171,10 @@ class CreativeDecisionBundle(BaseModel):
         if len(self.concepts) != 3:
             raise ValueError(f"{self.action} 必须包含三套完整创意方案。")
         validate_plan_concepts(self.concepts)
+        if [concept.concept_key for concept in self.concepts] != [
+            concept.concept_key for concept in self.storyboard_prompts.concepts
+        ]:
+            raise ValueError(f"{self.action} 的创意方案和分镜 Prompt 必须一一对应。")
 
         blocked_issues = [issue for issue in self.evaluation.issues if issue.severity == "blocked"]
         if self.action == "review_plan":

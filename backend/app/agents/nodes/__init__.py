@@ -1,4 +1,8 @@
-"""声明创意工作流节点名称，名称保持和工作流文档一致。"""
+"""声明创意工作流节点名称，名称保持和工作流文档一致。
+
+这些常量既是 LangGraph 中稳定的节点 ID，也用于节点 ``Command.goto`` 跳转；不要把
+展示文案直接作为 ID，以免文案调整导致已持久化的图状态无法对应。
+"""
 
 PRODUCT_UNDERSTANDING = "product_understanding"  # 商品理解节点：生成 ProductAnalysis。
 CREATIVE_SCRIPT = "creative_script"  # 脚本节点：生成三套创意方向和镜头计划。

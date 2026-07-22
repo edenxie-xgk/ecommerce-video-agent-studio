@@ -5,6 +5,7 @@ import {
   type CreativeRun,
   type Project,
   type ProjectAsset,
+  type StoryboardPromptBundle,
 } from '../api/client'
 
 type ProjectCollection<T> = Record<number, T[]>
@@ -32,6 +33,7 @@ export const useStudioStore = defineStore('studio', {
     projectLoadVersions: {} as ProjectValue<number>,
     pendingProjectLoads: {} as ProjectValue<number>,
     planningProjectId: null as number | null,
+    promptReviewingRunId: null as number | null,
   }),
   getters: {
     selectedProject(state) {
@@ -61,7 +63,7 @@ export const useStudioStore = defineStore('studio', {
       return state.planningProjectId !== null
     },
     operationBusy(state): boolean {
-      return state.planningProjectId !== null
+      return state.planningProjectId !== null || state.promptReviewingRunId !== null
     },
   },
   actions: {
@@ -140,6 +142,33 @@ export const useStudioStore = defineStore('studio', {
         throw error
       } finally {
         if (this.planningProjectId === projectId) this.planningProjectId = null
+      }
+    },
+    async reviewStoryboardPrompts(
+      projectId: number,
+      runId: number,
+      expectedPromptRevision: number,
+      storyboardPrompts: StoryboardPromptBundle,
+    ) {
+      if (this.operationBusy) throw new Error('另一项操作正在进行，请稍后再试。')
+      this.promptReviewingRunId = runId
+      try {
+        const run = await api.reviewStoryboardPrompts({
+          projectId,
+          runId,
+          expectedPromptRevision,
+          storyboardPrompts,
+        })
+        assertProjectResponse(projectId, run.project_id, '分镜 Prompt 复检接口')
+        if (run.id !== runId) throw new Error('分镜 Prompt 复检接口返回了不匹配的运行数据。')
+        this.upsertCreativeRun(projectId, run)
+        await this.refreshProjectSnapshot(projectId)
+        return run
+      } catch (error) {
+        await this.refreshProjectSnapshot(projectId)
+        throw error
+      } finally {
+        if (this.promptReviewingRunId === runId) this.promptReviewingRunId = null
       }
     },
     upsertCreativeRun(projectId: number, run: CreativeRun) {

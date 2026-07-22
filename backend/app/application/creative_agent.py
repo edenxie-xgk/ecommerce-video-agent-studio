@@ -21,6 +21,9 @@ from app.application.creative_plan import (
     GenerationMode,
     ProductAnalysis,
     ShotPlan,
+    StoryboardConceptPrompt,
+    StoryboardPromptBundle,
+    StoryboardShotPrompt,
 )
 
 __all__ = [
@@ -40,4 +43,7 @@ __all__ = [
     "QualityEvaluation",
     "QualityIssue",
     "ShotPlan",
+    "StoryboardConceptPrompt",
+    "StoryboardPromptBundle",
+    "StoryboardShotPrompt",
 ]

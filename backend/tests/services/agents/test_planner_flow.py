@@ -47,6 +47,76 @@ def test_planner_evaluates_three_concepts(
     )
 
 
+def test_storyboard_prompt_review_blocks_user_added_risky_claim(
+    local_planner: CreativePlanner,
+    run_input_factory: Callable[..., CreativeRunInput],
+) -> None:
+    """人工调整视频执行 Prompt 后，必须由 Prompt Check 阻断新增的风险表达。"""
+
+    decision = local_planner.run(run_input_factory()).bundle
+    original_prompts = decision.storyboard_prompts
+    first_concept = original_prompts.concepts[0]
+    first_shot = first_concept.shot_prompts[0].model_copy(
+        update={
+            "positive_prompt": "为 Portable thermal cup 生成永久保温效果的商品展示镜头。",
+            "negative_prompt": "避免模糊画面。",
+        }
+    )
+    edited_concept = first_concept.model_copy(
+        update={"shot_prompts": [first_shot, *first_concept.shot_prompts[1:]]}
+    )
+    edited_prompts = original_prompts.model_copy(
+        update={"concepts": [edited_concept, *original_prompts.concepts[1:]]}
+    )
+
+    reviewed = local_planner.review_storyboard_prompts(
+        decision=decision,
+        storyboard_prompts=edited_prompts,
+    )
+
+    assert reviewed.action == "resolve_quality_issues"
+    assert not reviewed.evaluation.passed
+    assert any(issue.code == "prompt_risky_claim" for issue in reviewed.evaluation.issues)
+    assert (
+        original_prompts.global_negative_prompt
+        in reviewed.storyboard_prompts.concepts[0].shot_prompts[0].negative_prompt
+    )
+
+
+def test_storyboard_prompt_review_normalizes_product_reference_formatting(
+    local_planner: CreativePlanner,
+    run_input_factory: Callable[..., CreativeRunInput],
+) -> None:
+    """商品名的大小写、空白和连字符差异不应触发无意义的主体缺失阻断。"""
+
+    decision = local_planner.run(run_input_factory()).bundle
+    first_concept = decision.storyboard_prompts.concepts[0]
+    first_shot = first_concept.shot_prompts[0].model_copy(
+        update={
+            "positive_prompt": "portable-thermal cup 主体居中展示，保持外观稳定。",
+        }
+    )
+    edited_prompts = decision.storyboard_prompts.model_copy(
+        update={
+            "concepts": [
+                first_concept.model_copy(
+                    update={"shot_prompts": [first_shot, *first_concept.shot_prompts[1:]]}
+                ),
+                *decision.storyboard_prompts.concepts[1:],
+            ]
+        }
+    )
+
+    reviewed = local_planner.review_storyboard_prompts(
+        decision=decision,
+        storyboard_prompts=edited_prompts,
+    )
+
+    assert not any(
+        issue.code == "prompt_missing_product_reference" for issue in reviewed.evaluation.issues
+    )
+
+
 class FailingProvider:
     configured = True
 
@@ -63,14 +133,38 @@ def test_model_node_retries_then_routes_to_local_fallback(
     use_agent_provider,
 ) -> None:
     provider = FailingProvider()
-    use_agent_provider(provider)
+    use_agent_provider(provider, product_understanding=False)
     planner = CreativePlanner()
 
     result = planner.run(run_input_factory())
 
-    assert provider.calls == 4
+    assert provider.calls == 2
     assert result.provider_key == "local"
     assert result.bundle.action == "review_plan"
+
+
+def test_product_understanding_model_failure_stops_run(
+    use_agent_provider,
+    run_input_factory,
+) -> None:
+    """商品理解模型已配置时，调用失败应暴露给请求层。"""
+
+    class FailingProductUnderstandingProvider:
+        configured = True
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def generate_json(self, **_kwargs):
+            self.calls += 1
+            raise ProviderTransientError("product understanding provider unavailable")
+
+    provider = use_agent_provider(FailingProductUnderstandingProvider())
+
+    with pytest.raises(ProviderTransientError, match="product understanding provider unavailable"):
+        CreativePlanner().run(run_input_factory())
+
+    assert provider.calls == 2
 
 
 class UnexpectedCallProvider:
@@ -142,11 +236,11 @@ def test_non_retryable_provider_error_falls_back_after_one_attempt(
     use_agent_provider,
 ) -> None:
     provider = RequestErrorProvider()
-    use_agent_provider(provider)
+    use_agent_provider(provider, product_understanding=False)
 
     result = CreativePlanner().run(run_input_factory())
 
-    assert provider.calls == 2
+    assert provider.calls == 1
     assert result.provider_key == "local"
     assert result.bundle.action == "review_plan"
 

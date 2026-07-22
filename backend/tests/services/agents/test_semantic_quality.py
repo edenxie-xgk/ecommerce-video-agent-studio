@@ -216,3 +216,65 @@ def test_external_draft_fails_closed_when_semantic_review_is_unavailable(
         issue.code == "semantic_review_unavailable"
         for issue in result.bundle.evaluation.issues
     )
+
+
+def test_manual_storyboard_edit_uses_semantic_claim_review(
+    local_planner: CreativePlanner,
+    run_input_factory: Callable[..., CreativeRunInput],
+    use_agent_provider,
+) -> None:
+    """人工添加规则无法识别的宣称时，仍须由语义审核阻断。"""
+
+    decision = local_planner.run(run_input_factory()).bundle
+    first_concept = decision.storyboard_prompts.concepts[0]
+    first_shot = first_concept.shot_prompts[0].model_copy(
+        update={
+            "positive_prompt": (
+                "Portable thermal cup 使用临床级保温科技，"
+                "为所有恢复期人群提供专业支持。"
+            )
+        }
+    )
+    edited_prompts = decision.storyboard_prompts.model_copy(
+        update={
+            "concepts": [
+                first_concept.model_copy(
+                    update={"shot_prompts": [first_shot, *first_concept.shot_prompts[1:]]}
+                ),
+                *decision.storyboard_prompts.concepts[1:],
+            ]
+        }
+    )
+    claim = "临床级保温科技，为所有恢复期人群提供专业支持"
+    provider = ReviewingProvider(
+        creative_payload={},
+        review_payload={
+            "assessments": [
+                {
+                    "text": claim,
+                    "field_path": "storyboard_prompts.pain-point.shot_prompts.1.positive_prompt",
+                    "status": "unsupported",
+                    "evidence_key": None,
+                    "reason": "确认事实没有临床技术或恢复期人群适用范围。",
+                }
+            ]
+        },
+    )
+    use_agent_provider(
+        provider,
+        product_understanding=False,
+        creative_script=False,
+        prompt_check=True,
+    )
+
+    reviewed = local_planner.review_storyboard_prompts(
+        decision=decision,
+        storyboard_prompts=edited_prompts,
+        require_semantic_review=True,
+    )
+
+    assert provider.calls == 1
+    assert not reviewed.evaluation.passed
+    assert any(
+        issue.code == "unsupported_semantic_claim" for issue in reviewed.evaluation.issues
+    )

@@ -4,6 +4,7 @@
 必须遵守：
 1. 检查所有方案的 title、strategy、hook、reasoning、primary_selling_point、
    target_audience、call_to_action，以及每个镜头的 purpose、visual、caption。
+   还必须检查 storyboard_prompt_positive_prompts 中每一镜的 positive_prompt。
 2. 商品参数、功效、时效、排名、销量、认证、材质、适用范围和绝对化结果都属于声明。
 3. supported 只能用于与某个 confirmed_fact 含义一致、且没有扩大程度或适用范围的声明。
 4. “密封”不能支持“完全不漏水”，“轻便”不能支持具体重量，“体验改善”不能支持治疗功效。
@@ -13,4 +14,6 @@
 8. supported 必须填写输入中真实存在的 evidence_key；unsupported 和 ambiguous 不得虚构 key。
 9. 不把镜头时长、构图说明、一般 CTA 或纯创意修辞误判成商品事实声明。
 10. assessments 必须覆盖发现的全部商品声明；每套方案的 primary_selling_point 必须有对应记录。
+    分镜 Prompt 中的声明使用
+    storyboard_prompts.{concept_key}.shot_prompts.{shot_order}.positive_prompt 作为 field_path。
 11. 只输出符合给定 JSON schema 的对象，不输出解释性正文。

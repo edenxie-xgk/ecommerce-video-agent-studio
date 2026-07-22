@@ -9,6 +9,7 @@ from typing import Protocol
 from pydantic import BaseModel, Field
 
 from app.application.creative_decision import CreativeDecisionBundle
+from app.application.creative_plan import StoryboardPromptBundle
 
 
 PHRASE_SEPARATOR_PATTERN = re.compile(r"[\n,，、;；]+")
@@ -133,5 +134,16 @@ class CreativeAgentPort(Protocol):
         execution_id: str | None = None,
     ) -> CreativeAgentResult:
         """启动一次新决策；显式 execution_id 必须从未用于其他运行。"""
+
+        ...
+
+    def review_storyboard_prompts(
+        self,
+        *,
+        decision: CreativeDecisionBundle,
+        storyboard_prompts: StoryboardPromptBundle,
+        require_semantic_review: bool = False,
+    ) -> CreativeDecisionBundle:
+        """复检用户编辑后的分镜 Prompt，并返回新的公开创意决策。"""
 
         ...
